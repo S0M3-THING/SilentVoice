@@ -1,0 +1,39 @@
+:root {
+  font: 18px/1.5 system-ui, sans-serif;
+  color: #17233a;
+  background: #f4f7fb;
+}
+main {
+  max-width: 42rem;
+  margin: 3rem auto;
+  padding: 0 1rem;
+}
+label {
+  display: block;
+  margin-top: 1rem;
+  font-weight: 650;
+}
+input, textarea, button {
+  font: inherit;
+  border: 1px solid #63728a;
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.8rem;
+}
+input, textarea {
+  box-sizing: border-box;
+  width: 100%;
+}
+button {
+  margin: 0.4rem 0.4rem 0.2rem 0;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+:focus-visible {
+  outline: 3px solid #1753b5;
+  outline-offset: 3px;
+}
