@@ -4,23 +4,24 @@ const CHOICES = [
   {
     id: 'care',
     label: 'I can’t use my voice right now',
-    hint: 'After surgery, with a breathing tube, or with a condition that affects your voice.',
+    hint: 'Your voice isn’t working right now: after surgery, with a breathing tube, after a stroke, or with a condition that affects speech. SilentVoice speaks for you.',
     defaults: [
-      'Sentences are spoken out loud',
+      'Sentences are spoken out loud, on this computer or a Bluetooth speaker',
       'Shortcuts for the nurse, pain, breathing and the bathroom',
       'It checks with you before saying anything it’s unsure of',
       'Large text you can show across the bed',
+      'Your own voice, made from old recordings, whenever you’re ready',
     ],
   },
   {
     id: 'quiet',
     label: 'I can talk, but need to stay quiet',
-    hint: 'In a library, an open office, on a train, or with someone asleep nearby.',
+    hint: 'Your voice works, but you shouldn’t speak out loud: a library, an open office, a train, someone asleep nearby. Or for security, when you need to share a password, PIN, account number or medical detail without anyone overhearing.',
     defaults: [
-      'Sentences are copied or shared, never spoken',
+      'Sentences are shown on screen, never spoken',
       'Shortcuts for quick everyday replies',
       'Earlier lines blur so people walking past can’t read them',
-      'Nothing is saved, and the screen clears after 2 minutes',
+      'Nothing is saved, and the screen clears after 2 minutes, so private details don’t stay on screen',
     ],
   },
 ]

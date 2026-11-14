@@ -29,12 +29,16 @@ export const api = {
   addLog: (entry) => request('/api/log', json('POST', entry)),
   clearLog: () => request('/api/log', { method: 'DELETE' }),
   voice: () => request('/api/voice'),
+  warmVoice: () => request('/api/voice/warmup', { method: 'POST' }),
   deleteVoice: () => request('/api/voice', { method: 'DELETE' }),
-  cloneVoice: (files, name) => {
+  setVoiceTranscript: (transcript) => request('/api/voice/transcript', json('PUT', { transcript })),
+  createVoice: ({ files, transcript, consent, source }) => {
     const form = new FormData()
-    form.append('name', name || 'My SilentVoice')
-    for (const f of files) form.append('files', f, f.name)
-    return request('/api/voice/clone', { method: 'POST', body: form })
+    for (const f of files) form.append('files', f, f.name || 'recording.webm')
+    form.append('transcript', transcript || '')
+    form.append('consent', String(Boolean(consent)))
+    form.append('source', source)
+    return request('/api/voice/reference', { method: 'POST', body: form })
   },
   lipread: ({ blob, mimeType, prefs, partnerText, history }) => {
     const form = new FormData()

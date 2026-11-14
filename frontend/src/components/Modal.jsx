@@ -3,17 +3,22 @@ import { X } from 'lucide-react'
 
 export default function Modal({ title, onClose, children, wide = false, labelledBy }) {
   const ref = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
+  // Runs once per opening. It used to depend on onClose, which is a new function on every
+  // app re-render (several times a second while the camera runs), so focus kept jumping
+  // back to the sheet and nobody could type in a box or open a dropdown.
   useEffect(() => {
     const prev = document.activeElement
     ref.current?.focus()
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const onKey = (e) => e.key === 'Escape' && onCloseRef.current()
     window.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('keydown', onKey)
       prev?.focus?.()
     }
-  }, [onClose])
+  }, [])
 
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>

@@ -2,7 +2,7 @@
  * The sentence about to be said. The one loud element on the page: large serif text,
  * underlined in the colour of how sure SilentVoice is.
  */
-export default function Sentence({ current, reading, error, dest, onDeliver, onPickAlt, onFallback, onShowLarge }) {
+export default function Sentence({ current, reading, error, dest, onDeliver, onPickAlt, onFallback }) {
   if (reading) {
     return (
       <section className="sentence is-empty" aria-live="polite">
@@ -61,14 +61,9 @@ export default function Sentence({ current, reading, error, dest, onDeliver, onP
         <button className="btn btn-primary btn-lg" onClick={() => onDeliver(current.text)}>
           {ask ? `Yes, ${dest.action.toLowerCase()}` : current.done ? dest.again : dest.action}
         </button>
-        {dest.id !== 'show' && (
-          <button className="btn btn-lg" onClick={onShowLarge}>
-            Show it large
-          </button>
-        )}
       </div>
 
-      {current.source === 'lipread' && (
+      {current.source === 'lipread' ? (
         <div className="guesses">
           {alts.length > 0 && <p className="guesses-label">Or did you mean</p>}
           {alts.map((a) => (
@@ -81,6 +76,12 @@ export default function Sentence({ current, reading, error, dest, onDeliver, onP
             <button className="link" onClick={() => onFallback('phrases')}>Pick a phrase</button>
             <button className="link" onClick={() => onFallback('yesno')}>Answer yes or no</button>
           </div>
+        </div>
+      ) : (
+        <div className="fallback-links">
+          <button className="link" onClick={() => onFallback('spell')}>Spell something else</button>
+          <button className="link" onClick={() => onFallback('phrases')}>Pick a phrase</button>
+          <button className="link" onClick={() => onFallback('yesno')}>Answer yes or no</button>
         </div>
       )}
     </section>

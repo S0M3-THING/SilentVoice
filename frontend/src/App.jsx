@@ -3,11 +3,13 @@ import { api } from './lib/api.js'
 import { playAlert, speak } from './lib/speech.js'
 import { useCamera, useCapture } from './lib/useCapture.js'
 import { usePartnerMic } from './lib/usePartnerMic.js'
-import { canShare, copyText, destinations } from './lib/destinations.js'
+import { currentDestination, destinations, useSpeakers } from './lib/destinations.js'
+import { useMouthTracker } from './lib/useMouthTracker.js'
 import Shortcuts from './components/Shortcuts.jsx'
 import CameraPanel from './components/CameraPanel.jsx'
 import Sentence from './components/Sentence.jsx'
 import SidePanel from './components/SidePanel.jsx'
+import PartnerPanel from './components/PartnerPanel.jsx'
 import Board from './components/Board.jsx'
 import PainScale from './components/PainScale.jsx'
 import PartnerView from './components/PartnerView.jsx'
@@ -18,8 +20,6 @@ const URGENT_RE = /can'?t breathe|cannot breathe|suction|nurse|in pain|pain is (
 
 const DONE_NOTE = {
   loud: 'Said out loud.',
-  copy: 'Copied. Paste it wherever you need it.',
-  share: 'Sent to your share menu.',
   show: 'Shown on screen.',
 }
 
@@ -33,7 +33,6 @@ export default function App() {
   const [reading, setReading] = useState(false)
   const [readError, setReadError] = useState('')
   const [partnerText, setPartnerText] = useState('')
-  const [paused, setPaused] = useState(false)
   const [modal, setModal] = useState(null)
   const [toast, setToast] = useState('')
   const [setupBusy, setSetupBusy] = useState(false)
@@ -140,9 +139,12 @@ export default function App() {
     [prefs],
   )
 
-  const dests = useMemo(() => destinations(voiceStatus), [voiceStatus])
-  const destId = prefs?.destination || 'loud'
-  const dest = dests.find((d) => d.id === destId) || dests[0]
+  const speakers = useSpeakers()
+  const dests = useMemo(() => destinations(speakers, voiceStatus), [speakers, voiceStatus])
+  const dest = currentDestination(dests, prefs)
+  const destId = dest.id
+  // The speaker to use: the chosen one, or (when showing on screen) the first one for urgent lines.
+  const speakerId = (dest.id === 'loud' ? dest : dests[0]).speakerId || ''
 
   const deliver = useCallback(
     async (text, source, extra = {}) => {
@@ -165,20 +167,15 @@ export default function App() {
 
       if (target === 'loud') {
         if (urgent && prefs?.alert_sound) {
-          playAlert()
+          playAlert(speakerId)
           await new Promise((r) => setTimeout(r, 750))
         }
-        speak(text, prefs, voiceStatus)
-      } else if (target === 'copy') {
-        setToast((await copyText(text)) ? 'Copied.' : 'Couldn’t copy. Select the sentence and copy it yourself.')
-      } else if (target === 'share') {
-        if (canShare) navigator.share({ text }).catch(() => {})
-        else setToast((await copyText(text)) ? 'Copied, because this browser can’t share.' : 'Couldn’t share or copy.')
-      } else if (target === 'show') {
+        speak(text, { ...prefs, speaker_id: speakerId }, voiceStatus)
+      } else {
         setModal({ type: 'show', text })
       }
     },
-    [addEntry, destId, prefs, voiceStatus],
+    [addEntry, destId, prefs, voiceStatus, speakerId],
   )
 
   const handleClip = useCallback(
@@ -204,7 +201,7 @@ export default function App() {
           source: 'lipread',
         }
         setCurrent(next)
-        if (!r.needs_confirmation && (destId === 'loud' || destId === 'copy')) {
+        if (!r.needs_confirmation && destId === 'loud') {
           deliver(r.text, 'lipread', { confidence: r.confidence, raw: next.raw, label: r.confidence_label })
         }
       } catch (e) {
@@ -233,18 +230,18 @@ export default function App() {
   // ---------------------------------------------------------------- capture
   const { videoRef, stream, error: cameraError } = useCamera()
   const awaitingConfirm = Boolean(current?.needsConfirm && !current?.done)
-  const mode = prefs?.capture_mode || 'auto'
+  const mode = prefs?.capture_mode === 'hold' ? 'hold' : 'tap'
   const modalOpen = Boolean(modal)
   const captureEnabled = modelState === 'ready' && !reading && !modalOpen
-  const effectiveMode = mode === 'auto' && (paused || awaitingConfirm) ? 'manual' : mode
+  const following = prefs ? prefs.follow_lips !== false : false
+  const tracker = useMouthTracker({ videoRef, stream, enabled: following && !reading && !modalOpen })
 
   const capture = useCapture({
     videoRef,
     stream,
-    mode: effectiveMode,
-    sensitivity: prefs?.sensitivity ?? 0.5,
     enabled: captureEnabled,
     onClip: handleClip,
+    mouthRef: tracker.mouthRef,
   })
   const mic = usePartnerMic({ enabled: Boolean(prefs?.partner_mic), onFinal: onPartner })
 
@@ -295,7 +292,6 @@ export default function App() {
           {modelState === 'ready' ? 'Your camera is read on this computer. Video is never saved.' : 'Lip reading is starting…'}
         </p>
         <div className="top-actions">
-          <button className="btn" onClick={() => setModal({ type: 'show', text: lastSaid })}>Show it large</button>
           <button className="btn" onClick={() => setModal({ type: 'settings' })}>Settings</button>
         </div>
       </header>
@@ -313,11 +309,18 @@ export default function App() {
           capture={capture}
           mode={mode}
           onModeChange={(m) => savePrefs({ capture_mode: m })}
-          paused={paused}
-          onTogglePause={() => setPaused((p) => !p)}
           busy={reading ? 'reading' : awaitingConfirm ? 'confirm' : null}
           modelState={modelState}
           unmirror={prefs.unmirror}
+          mouth={tracker.mouth}
+          following={following && !tracker.unavailable}
+        />
+
+        <div className="center">
+        <PartnerPanel
+          partner={{ text: partnerText, interim: mic.interim, micOn: Boolean(prefs.partner_mic), listening: mic.listening, error: mic.error }}
+          onPartnerTyped={onPartner}
+          onToggleMic={() => savePrefs({ partner_mic: !prefs.partner_mic })}
         />
 
         <Sentence
@@ -328,16 +331,13 @@ export default function App() {
           onDeliver={(t) => deliver(t, current?.source || 'lipread', { confidence: current?.confidence, raw: current?.raw, label: current?.label })}
           onPickAlt={(a) => deliver(a, 'lipread', { confidence: null, raw: current?.raw, label: null, repaired: false })}
           onFallback={(tab) => setModal({ type: 'board', tab })}
-          onShowLarge={() => setModal({ type: 'show', text: current?.text })}
         />
+        </div>
 
         <SidePanel
           dests={dests}
-          dest={destId}
-          onDest={(d) => savePrefs({ destination: d })}
-          partner={{ text: partnerText, interim: mic.interim, micOn: Boolean(prefs.partner_mic), listening: mic.listening, error: mic.error }}
-          onPartnerTyped={onPartner}
-          onToggleMic={() => savePrefs({ partner_mic: !prefs.partner_mic })}
+          destKey={dest.key}
+          onDest={(d) => savePrefs(d.id === 'loud' ? { destination: 'loud', speaker_id: d.speakerId } : { destination: 'show' })}
           entries={entries}
           blur={prefs.privacy_blur}
           keepHistory={prefs.keep_history}
@@ -385,6 +385,8 @@ export default function App() {
           }}
           voiceStatus={voiceStatus}
           onVoiceChanged={setVoiceStatus}
+          health={health}
+          speakerId={speakerId}
           onClearLog={async () => {
             await api.clearLog()
             setEntries([])

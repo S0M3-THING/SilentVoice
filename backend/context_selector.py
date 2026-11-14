@@ -1,6 +1,8 @@
 """Pick the final sentence from the lip-reading n-best list.
 
 Order of preference:
+0. Word check (local text model, when ready) re-orders the lip-reading guesses by how likely
+   each is as a reply in this conversation. Everything below then works on that order.
 1. Phrases-only mode -> deterministic local matcher (instant, offline).
 2. LLM configured (Groq, key kept server-side) -> context-aware repair of look-alike words.
 3. Anything fails / no key / offline -> deterministic local matcher.
@@ -19,7 +21,10 @@ from typing import Iterable
 
 import httpx
 
+from starlette.concurrency import run_in_threadpool
+
 from phrases import confidence_label, normalize_text, rank_locally
+from word_check import check_guesses
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_LLM_MODEL = "moonshotai/kimi-k2-instruct"
@@ -63,15 +68,36 @@ async def select_best_hypothesis(
     llm_model: str | None = None,
     usage: dict[str, int] | None = None,
     names: list[str] | None = None,
+    checker=None,
 ) -> dict:
     t0 = time.perf_counter()
     phrases = [p.strip() for p in phrase_bank if p and p.strip()]
+    raw_candidates = vsr_candidates
+    check = None
+    if not closed_set and vsr_candidates:
+        check = await run_in_threadpool(check_guesses, checker, vsr_candidates, partner_text, history)
+        if check:
+            vsr_candidates = check["candidates"]
+
+    def _finish(res: dict) -> dict:
+        if check:
+            res["word_check"] = {"changed_top": check["changed_top"], "ms": check["ms"]}
+            res["provider"] = f"{res.get('provider', 'local')}+word-check"
+            # The text model picked something other than the lips' first guess: always ask.
+            if check["changed_top"] and normalize_text(res.get("text", "")) == normalize_text(vsr_candidates[0]["text"]):
+                res["confidence"] = min(res.get("confidence", 0.0), 0.6)
+                res["confidence_label"] = confidence_label(res["confidence"])
+                res["reasoning"] = (
+                    f"The word check preferred this over the lips' first guess ({raw_candidates[0]['text']!r}). "
+                    + str(res.get("reasoning", ""))
+                )
+        res["llm_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        return res
 
     def _local() -> dict:
         res = rank_locally(vsr_candidates, phrases, partner_text=partner_text, closed_set=closed_set, usage=usage)
         res["repaired"] = False
-        res["llm_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-        return res
+        return _finish(res)
 
     if closed_set or not vsr_candidates:
         return _local()
@@ -125,13 +151,12 @@ async def select_best_hypothesis(
         if c["text"] and c["text"] not in alts:
             alts.append(c["text"])
 
-    return {
+    return _finish({
         "text": text,
         "confidence": conf,
         "confidence_label": confidence_label(conf),
         "alternatives": alts[:3],
         "provider": f"groq:{model}",
         "reasoning": str(parsed.get("reasoning") or "Chosen using conversation context."),
-        "repaired": _is_repaired(text, vsr_candidates, phrases),
-        "llm_ms": round((time.perf_counter() - t0) * 1000, 1),
-    }
+        "repaired": _is_repaired(text, raw_candidates, phrases),
+    })

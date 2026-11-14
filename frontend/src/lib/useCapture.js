@@ -5,8 +5,6 @@ export const MOUTH_BOX = { x: 0.32, y: 0.5, w: 0.36, h: 0.26 }
 
 const MIN_CLIP_MS = 600
 const MAX_CLIP_MS = 10000
-const QUIET_TO_STOP_MS = 850
-const COOLDOWN_MS = 900
 
 function pickMimeType() {
   const options = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
@@ -59,11 +57,11 @@ export function useCamera() {
 
 /**
  * Records short clips of the user mouthing words.
- * mode "auto": hands-free. Starts when the lips move inside the guide, stops after a pause.
- * mode "tap":  tap once to start, tap again to stop (good for weak hands or a helper).
+ * mode "tap":  tap (or Space) once to start, again to stop. Good for weak hands or a helper.
  * mode "hold": press and hold.
+ * `mouthRef` (from useMouthTracker) points the movement meter at the mouth wherever it is.
  */
-export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled, onClip }) {
+export function useCapture({ videoRef, stream, enabled, onClip, mouthRef }) {
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [level, setLevel] = useState(0)
@@ -74,16 +72,13 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
   const startedAtRef = useRef(0)
   const recordingRef = useRef(false)
   const discardRef = useRef(false)
-  const quietMsRef = useRef(0)
-  const aboveRef = useRef(0)
-  const cooldownUntilRef = useRef(0)
   const onClipRef = useRef(onClip)
-  const settingsRef = useRef({ mode, sensitivity, enabled })
+  const enabledRef = useRef(enabled)
   onClipRef.current = onClip
-  settingsRef.current = { mode, sensitivity, enabled }
+  enabledRef.current = enabled
 
   const start = useCallback(() => {
-    if (!stream || recordingRef.current || !settingsRef.current.enabled) return
+    if (!stream || recordingRef.current || !enabledRef.current) return
     const mimeType = pickMimeType()
     const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
     chunksRef.current = []
@@ -91,7 +86,6 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
     rec.ondataavailable = (e) => e.data?.size && chunksRef.current.push(e.data)
     rec.onstop = () => {
       const duration = Date.now() - startedAtRef.current
-      cooldownUntilRef.current = Date.now() + COOLDOWN_MS
       if (discardRef.current || duration < MIN_CLIP_MS) return
       const type = rec.mimeType || mimeType || 'video/webm'
       const blob = new Blob(chunksRef.current, { type })
@@ -99,7 +93,6 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
     }
     recorderRef.current = rec
     startedAtRef.current = Date.now()
-    quietMsRef.current = 0
     recordingRef.current = true
     setRecording(true)
     setSeconds(0)
@@ -121,7 +114,7 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
     if (!enabled && recordingRef.current) stop(true)
   }, [enabled, stop])
 
-  // Motion + lighting analysis on a tiny downscaled copy of the frame.
+  // Movement meter + lighting check on a tiny downscaled copy of the frame.
   useEffect(() => {
     if (!stream) return
     const canvas = document.createElement('canvas')
@@ -131,23 +124,26 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
     canvas.height = H
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     let prev = null
+    let prevKey = ''
     let ema = 0
-    let lastTick = performance.now()
     let frame = 0
-
-    const x0 = Math.round(MOUTH_BOX.x * W)
-    const y0 = Math.round(MOUTH_BOX.y * H)
-    const x1 = Math.round((MOUTH_BOX.x + MOUTH_BOX.w) * W)
-    const y1 = Math.round((MOUTH_BOX.y + MOUTH_BOX.h) * H)
 
     const timer = setInterval(() => {
       const video = videoRef.current
       if (!video || video.readyState < 2) return
-      const now = performance.now()
-      const dt = now - lastTick
-      lastTick = now
       ctx.drawImage(video, 0, 0, W, H)
       const { data } = ctx.getImageData(0, 0, W, H)
+
+      // The box around the mouth: tracked if we know where it is, otherwise the guide.
+      const m = mouthRef?.current
+      const box = m
+        ? { x: m.x - m.face_w * 0.35, y: m.y - m.face_w * 0.2, w: m.face_w * 0.7, h: m.face_w * 0.4 }
+        : { x: MOUTH_BOX.x, y: MOUTH_BOX.y - MOUTH_BOX.h / 2, w: MOUTH_BOX.w, h: MOUTH_BOX.h }
+      const x0 = Math.max(0, Math.round(box.x * W))
+      const y0 = Math.max(0, Math.round(box.y * H))
+      const x1 = Math.min(W, Math.max(x0 + 2, Math.round((box.x + box.w) * W)))
+      const y1 = Math.min(H, Math.max(y0 + 2, Math.round((box.y + box.h) * H)))
+      const key = `${x0},${y0},${x1},${y1}`
 
       const roi = new Float32Array((x1 - x0) * (y1 - y0))
       let k = 0
@@ -158,11 +154,12 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
         }
       }
       let diff = 0
-      if (prev) {
+      if (prev && key === prevKey) {
         for (let i = 0; i < roi.length; i++) diff += Math.abs(roi[i] - prev[i])
         diff /= roi.length
       }
       prev = roi
+      prevKey = key
       ema = ema * 0.6 + diff * 0.4
 
       frame += 1
@@ -172,32 +169,12 @@ export function useCapture({ videoRef, stream, mode, sensitivity = 0.5, enabled,
         setBrightness(sum / (data.length / 16))
       }
       setLevel(Math.min(1, ema / 18))
-
       if (recordingRef.current) setSeconds((Date.now() - startedAtRef.current) / 1000)
-
-      const { mode: m, sensitivity: s, enabled: en } = settingsRef.current
-      if (recordingRef.current && Date.now() - startedAtRef.current > MAX_CLIP_MS) return stop()
-      if (m !== 'auto' || !en) {
-        aboveRef.current = 0
-        return
-      }
-      const startAt = 10 - 7 * Math.max(0, Math.min(1, s))
-      const stopAt = startAt * 0.5
-      if (!recordingRef.current) {
-        if (Date.now() < cooldownUntilRef.current) return
-        aboveRef.current = ema > startAt ? aboveRef.current + 1 : 0
-        if (aboveRef.current >= 2) {
-          aboveRef.current = 0
-          start()
-        }
-      } else {
-        quietMsRef.current = ema < stopAt ? quietMsRef.current + dt : 0
-        if (quietMsRef.current >= QUIET_TO_STOP_MS) stop()
-      }
+      if (recordingRef.current && Date.now() - startedAtRef.current > MAX_CLIP_MS) stop()
     }, 66)
 
     return () => clearInterval(timer)
-  }, [stream, videoRef, start, stop])
+  }, [stream, videoRef, stop, mouthRef])
 
   return { recording, seconds, level, brightness, start, stop, toggle }
 }
