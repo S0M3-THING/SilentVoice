@@ -21,7 +21,7 @@ treatment plans, and many report anxiety and frustration when they can't. Silent
 
 | Problem with earlier tools | What SilentVoice does |
 | --- | --- |
-| Lip reading is often wrong | A small **local text model** checks the guesses against the conversation ("coffee", not "toffee", after "Would you like a drink?"). Then it shows 3 guesses and **None of these**, which opens a phrase board, spelling keyboard or yes/no. You're never stuck. |
+| Lip reading is often wrong | A **local text model** (Gemma 4 E2B) checks the guesses against the conversation ("coffee", not "toffee", after "Would you like a drink?") and rewrites unclear readings into clear sentences that look the same on the lips; SilentVoice asks before saying a rewrite. Then it shows 3 guesses and **None of these**, which opens a phrase board, spelling keyboard or yes/no. You're never stuck. |
 | Wrong guesses put words in your mouth | Asks **"Is this what you said?"** when unsure, flags AI-corrected words, and never asserts an urgent phrase from a weak match. |
 | Needed Wi-Fi / a server | Lip reading and phrase matching run **offline** on the laptop. AI correction is optional. |
 | Nobody nearby should see or hear it | Also for security: share a password, PIN or account number without being overheard. In quiet setups nothing is spoken or saved, earlier lines blur, the screen clears after 2 minutes, and the camera shows only your mouth (the "lip slot"). |
@@ -41,7 +41,7 @@ SilentVoice/
 │   ├── app.py               API routes; model loads in the background
 │   ├── vsr_service.py       Lip reading (Auto-AVSR via Chaplin), top-10 guesses
 │   ├── context_selector.py  Picks the final sentence (word check, optional Groq LLM, offline fallback)
-│   ├── word_check.py        Local text model (Qwen2.5 1.5B via mlx-lm) that ranks the lip-reading guesses
+│   ├── word_check.py        Local text model (Gemma 4 E2B via mlx-lm): ranks and rewrites lip-reading guesses
 │   ├── mouth.py             Finds the mouth in a frame so the lip window can follow it (MediaPipe)
 │   ├── system_voice.py      The Mac's voices (`say`) as audio, so speech can go to any speaker
 │   ├── phrases.py           Phrase bank, look-alike-letter matcher, urgent detection
@@ -71,8 +71,9 @@ Needs macOS or Linux, Python 3.11, Node 18+, ffmpeg (`brew install ffmpeg`) and 
 On first start the lip-reading weights (~1 GB, `Amanvir/LRS3_V_WER19.1`) download from Hugging Face.
 While the model loads, the phrase board, spelling, quick buttons and partner view already work.
 
-The word check model (~0.9 GB, `mlx-community/Qwen2.5-1.5B-Instruct-4bit`) downloads on first start on
+The word check model (~3.6 GB, `mlx-community/gemma-4-e2b-it-4bit`, Apache 2.0) downloads on first start on
 Apple Silicon Macs. It runs locally; turn it off in **Settings → Reading**, or with `SILENTVOICE_WORD_CHECK=0`.
+On a Mac with 16 GB or more, `SILENTVOICE_CHECK_MODEL=mlx-community/gemma-4-e4b-it-4bit` is more accurate but slower.
 
 An optional Groq key can be added in **Settings → Privacy**. It's stored in `backend/data/secrets.json` and is never
 sent to the browser.

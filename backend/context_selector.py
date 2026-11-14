@@ -24,7 +24,7 @@ import httpx
 from starlette.concurrency import run_in_threadpool
 
 from phrases import confidence_label, name_variants, normalize_text, rank_locally
-from word_check import check_guesses
+from word_check import check_guesses, rewrite_guesses
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_LLM_MODEL = "moonshotai/kimi-k2-instruct"
@@ -102,12 +102,36 @@ async def select_best_hypothesis(
         res["repaired"] = bool(names) and not closed_set and _is_repaired(res.get("text", ""), raw_candidates, phrases)
         return _finish(res)
 
+    async def _local_with_rewrite() -> dict:
+        res = _local()
+        # Unsure reading: ask the text model for clear sentences that look the same on the lips.
+        if closed_set or res.get("confidence_label") == "high" or not vsr_candidates:
+            return res
+        rw = await run_in_threadpool(rewrite_guesses, checker, vsr_candidates, partner_text, history, names)
+        if not rw:
+            return res
+        best, rest = rw["sentences"][0], rw["sentences"][1:]
+        alts = list(dict.fromkeys(rest + [res["text"]] + [a for a in res.get("alternatives", [])]))
+        alts = [a for a in alts if normalize_text(a) != normalize_text(best)][:3]
+        conf = min(res.get("confidence", 0.5), 0.6)
+        res.update({
+            "text": best,
+            "alternatives": alts,
+            "confidence": conf,
+            "confidence_label": confidence_label(conf),
+            "repaired": _is_repaired(best, raw_candidates, phrases),
+            "provider": f"{res.get('provider', 'local')}+rewrite",
+            "reasoning": f"Rewritten by the local text model from unclear lip reading ({raw_candidates[0]['text']!r}).",
+            "rewrite_ms": rw["ms"],
+        })
+        return res
+
     if closed_set or not vsr_candidates:
         return _local()
 
     key = (api_key or os.environ.get("GROQ_API_KEY") or "").strip()
     if not key:
-        return _local()
+        return await _local_with_rewrite()
 
     model = (llm_model or os.environ.get("SILENTVOICE_LLM_MODEL") or DEFAULT_LLM_MODEL).strip()
     payload = {

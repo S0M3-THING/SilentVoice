@@ -71,9 +71,9 @@ function UseTab({ prefs, onSetup }) {
 function wordCheckNote(wc) {
   if (!wc) return ''
   if (!wc.available) return wc.reason
-  if (wc.state === 'loading') return 'Getting the word check ready. The first time downloads the model (about 0.9 GB).'
+  if (wc.state === 'loading') return 'Getting the word check ready. The first time downloads the model (Gemma 4, about 3.6 GB).'
   if (wc.state === 'error') return `The word check didn’t load: ${wc.reason}`
-  if (wc.state === 'ready') return 'Ready. Runs on this computer; nothing is sent anywhere.'
+  if (wc.state === 'ready') return `Ready (${wc.model}). Runs on this computer; nothing is sent anywhere.`
   return ''
 }
 
@@ -87,7 +87,7 @@ function ReadingTab({ prefs, setPref, health }) {
       </p>
       <Toggle
         label="Check guesses with a text model"
-        hint="A small text model on this computer picks the guess that makes the most sense, using what the other person just said. For example “coffee” instead of “toffee” after “Would you like a drink?”. If it changes the lips’ first guess, SilentVoice always asks you first."
+        hint="A text model on this computer picks the guess that makes the most sense, using what the other person just said (“coffee”, not “toffee”, after “Would you like a drink?”). When the reading is unclear, it rewrites it into clear sentences that look the same on the lips. Whenever it changes what the lips showed, SilentVoice asks you first."
         checked={prefs.word_check !== false}
         onChange={(v) => setPref('word_check', v)}
       />

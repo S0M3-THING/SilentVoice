@@ -214,3 +214,51 @@ def test_switch_voice_model(tmp_path):
     assert v["engine_key"] == "qwen3" and [e["key"] for e in v["engines"]] == ["qwen3", "cosyvoice"]
     client.put("/api/profile", json={"preferences": {"voice_model": "cosyvoice"}})
     assert client.get("/api/voice").json()["engine"] == "Fake Cosy"
+
+
+# ---------------------------------------------------------------- rewriting unclear readings
+from word_check import build_rewrite_prompt, keep_close_rewrites, parse_rewrites  # noqa: E402
+
+
+class RewritingChecker(FakeChecker):
+    def __init__(self, reply):
+        super().__init__(liked=())
+        self.reply = reply
+        self.prompts = []
+
+    def rewrite(self, prompt):
+        self.prompts.append(prompt)
+        return self.reply
+
+
+def test_parse_rewrites_cleans_model_output():
+    reply = "<|channel>thought hmm<channel|>1. I would do it too.\n- \"I want to go to the bathroom.\"\n\nHere are the sentences:\n3) I need to use the bathroom."
+    assert parse_rewrites(reply) == ["I would do it too.", "I want to go to the bathroom.", "I need to use the bathroom."]
+
+
+def test_rewrites_that_drift_from_the_lips_are_dropped():
+    kept = keep_close_rewrites(["I would do it too.", "Please turn off the lights."], ["i would do it to boom"])
+    assert kept == ["I would do it too."]
+
+
+def test_rewrite_prompt_has_the_context():
+    p = build_rewrite_prompt(["i want some toffee"], "Would you like a drink?", [], ["Akash"])
+    assert "1. i want some toffee" in p and "Would you like a drink?" in p and "Akash" in p
+
+
+def test_unsure_reading_is_rewritten_and_checked(tmp_path):
+    checker = RewritingChecker("I want to go to the bathroom.\nI would do it too.\nPlease turn off the lights.")
+    client, _ = _client(tmp_path, checker, cands=[{"text": "i would do it to boom", "prob": 0.5}, {"text": "i would do it to bloom", "prob": 0.5}])
+    r = client.post("/api/lipread", files={"video": ("c.webm", b"x", "video/webm")}).json()["result"]
+    assert r["text"] == "I want to go to the bathroom."
+    assert r["needs_confirmation"] is True and r["repaired"] is True
+    assert "I would do it too." in r["alternatives"]
+    assert "Please turn off the lights." not in r["alternatives"]  # too far from what the lips did
+    assert "+rewrite" in r["provider"]
+
+
+def test_clear_reading_is_not_rewritten(tmp_path):
+    checker = RewritingChecker("Something else entirely.")
+    client, _ = _client(tmp_path, checker, cands=[{"text": "i need water", "prob": 0.97}, {"text": "i need waiter", "prob": 0.03}])
+    r = client.post("/api/lipread", files={"video": ("c.webm", b"x", "video/webm")}).json()["result"]
+    assert r["text"].rstrip(".") == "I need water" and checker.prompts == []
