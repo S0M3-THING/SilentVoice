@@ -22,13 +22,17 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from context_selector import DEFAULT_LLM_MODEL, select_best_hypothesis
 from phrases import is_urgent, pretty
+from mouth import MouthLocator
 from store import Store
 from voice import VoiceError, VoiceService
+from word_check import MLXWordChecker
+import system_voice
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -54,7 +58,6 @@ class UseIn(BaseModel):
 
 class SecretsIn(BaseModel):
     groq_api_key: str | None = None
-    elevenlabs_api_key: str | None = None
 
 
 class LogIn(BaseModel):
@@ -65,8 +68,18 @@ class LogIn(BaseModel):
     raw: str | None = None
 
 
+class TranscriptIn(BaseModel):
+    transcript: str = Field(min_length=1, max_length=2000)
+
+
 class TTSIn(BaseModel):
     text: str = Field(min_length=1, max_length=500)
+
+
+class SystemTTSIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    voice: str = ""
+    rate: float = 1.0
 
 
 class ModelHolder:
@@ -96,9 +109,19 @@ class ModelHolder:
             self.error = f"{type(exc).__name__}: {exc}"
 
 
-def create_app(store: Store | None = None, vsr_service: Any = None, autoload: bool = True) -> FastAPI:
+def create_app(
+    store: Store | None = None,
+    vsr_service: Any = None,
+    autoload: bool = True,
+    voice_engine: Any = None,
+    voice_engines: dict | None = None,
+    word_checker: Any = None,
+    mouth_locator: Any = None,
+) -> FastAPI:
     store = store or Store()
-    voice = VoiceService(store)
+    voice = VoiceService(store, engine=voice_engine, engines=voice_engines)
+    checker = word_checker if word_checker is not None else MLXWordChecker()
+    mouth = mouth_locator if mouth_locator is not None else MouthLocator()
     model = ModelHolder()
     if vsr_service is not None:
         model.service, model.state = vsr_service, "ready"
@@ -107,6 +130,10 @@ def create_app(store: Store | None = None, vsr_service: Any = None, autoload: bo
     async def lifespan(_app: FastAPI):
         if autoload and model.state == "idle" and os.environ.get("SILENTVOICE_SKIP_MODEL") != "1":
             model.start()
+        if autoload and voice.has_voice():
+            voice.warm_up()
+        if autoload and checker.state == "idle" and checker.availability()[0]:
+            checker.load_in_background()
         yield
 
     app = FastAPI(title="SilentVoice API", version="1.0.0", lifespan=lifespan)
@@ -132,6 +159,8 @@ def create_app(store: Store | None = None, vsr_service: Any = None, autoload: bo
             "model": "Auto-AVSR LRS3_V_WER19.1 (local)",
             "ai_configured": bool(store.get_secret("groq_api_key")),
             "voice": voice.status(),
+            "word_check": checker.status(),
+            "mac_voice": system_voice.available(),
         }
 
     # ------------------------------------------------------------------ profile
@@ -142,7 +171,10 @@ def create_app(store: Store | None = None, vsr_service: Any = None, autoload: bo
 
     @app.put("/api/profile")
     def put_profile(patch: ProfilePatch):
-        return store.update_profile(patch.model_dump(exclude_none=True))
+        prof = store.update_profile(patch.model_dump(exclude_none=True))
+        if patch.preferences and "voice_model" in patch.preferences:
+            voice.select(prof["preferences"].get("voice_model", "qwen3"))
+        return prof
 
     @app.post("/api/profile/setup")
     def setup_profile(body: SetupIn):
@@ -227,6 +259,7 @@ def create_app(store: Store | None = None, vsr_service: Any = None, autoload: bo
             llm_model=os.environ.get("SILENTVOICE_LLM_MODEL", DEFAULT_LLM_MODEL),
             usage=store.usage(),
             names=names,
+            checker=checker if profile["preferences"].get("word_check", True) else None,
         )
 
         selection["text"] = pretty(selection.get("text", ""))
@@ -299,39 +332,94 @@ def create_app(store: Store | None = None, vsr_service: Any = None, autoload: bo
             headers={"Content-Disposition": f'attachment; filename="silentvoice-log-{stamp}.txt"'},
         )
 
-    # ------------------------------------------------------------------ own voice
+    # ------------------------------------------------------------------ own voice (local, Qwen3-TTS)
     @app.get("/api/voice")
     def voice_status():
         return voice.status()
 
-    @app.post("/api/voice/clone")
-    async def voice_clone(name: str = Form("My SilentVoice"), files: list[UploadFile] = File(...)):
+    @app.post("/api/voice/reference")
+    async def voice_reference(
+        files: list[UploadFile] = File(...),
+        transcript: str = Form(""),
+        consent: bool = Form(False),
+        source: Literal["upload", "recording"] = Form("upload"),
+    ):
         payload = []
+        total = 0
         for f in files[:10]:
             data = await f.read()
+            total += len(data)
+            if total > 200 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="Recordings are too large. Keep them under 200 MB in total.")
             if data:
-                payload.append((f.filename or "sample.mp3", data, f.content_type or "audio/mpeg"))
+                payload.append((f.filename or "recording.webm", data))
         try:
-            await voice.clone(name, payload)
+            return await run_in_threadpool(voice.create, payload, transcript, consent, source)
         except VoiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/voice/reference")
+    def voice_reference_audio():
+        if not voice.ref_path.exists():
+            raise HTTPException(status_code=404, detail="No voice sample yet.")
+        return FileResponse(voice.ref_path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.put("/api/voice/transcript")
+    def voice_transcript(body: TranscriptIn):
+        try:
+            return voice.set_transcript(body.transcript)
+        except VoiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/voice/warmup")
+    def voice_warmup():
+        voice.warm_up()
         return voice.status()
 
     @app.delete("/api/voice")
-    async def voice_delete():
-        await voice.delete_voice()
-        return voice.status()
-
+    def voice_delete():
+        return voice.delete()
 
     @app.post("/api/tts")
     async def tts(body: TTSIn):
         try:
-            audio = await voice.tts(body.text)
+            audio = await run_in_threadpool(voice.speak, body.text)
         except VoiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Voice service unavailable: {type(exc).__name__}") from exc
-        return Response(audio, media_type="audio/mpeg")
+            raise HTTPException(status_code=502, detail=f"Your voice couldn’t be generated: {type(exc).__name__}") from exc
+        return Response(audio, media_type="audio/wav")
+
+    # ------------------------------------------------------------------ the Mac's voices
+    @app.get("/api/voices/system")
+    def system_voices():
+        return {"available": system_voice.available(), "voices": system_voice.list_voices()}
+
+    @app.post("/api/tts/system")
+    async def tts_system(body: SystemTTSIn):
+        if not system_voice.available():
+            raise HTTPException(status_code=501, detail="The Mac voice is only available on macOS.")
+        try:
+            audio = await run_in_threadpool(system_voice.speak_to_wav, body.text, body.voice, body.rate)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"The Mac voice failed: {type(exc).__name__}") from exc
+        return Response(audio, media_type="audio/wav")
+
+    # ------------------------------------------------------------------ lip tracking
+    @app.post("/api/mouth")
+    async def find_mouth(frame: UploadFile = File(...)):
+        data = await frame.read()
+        if not data or len(data) > 2 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Send one small JPEG frame.")
+        try:
+            return await run_in_threadpool(mouth.locate, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            mouth.error = f"{type(exc).__name__}: {exc}"
+            raise HTTPException(status_code=503, detail="Lip tracking is unavailable.") from exc
+        finally:
+            del data
 
     return app
 

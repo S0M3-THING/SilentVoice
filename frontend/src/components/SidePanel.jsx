@@ -1,63 +1,24 @@
-import { useState } from 'react'
-import { partnerMicSupported } from '../lib/usePartnerMic.js'
-
 const fmt = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
-/** Where it goes, what the other person said, and what was said earlier. */
-export default function SidePanel({
-  dests,
-  dest,
-  onDest,
-  partner,
-  onPartnerTyped,
-  onToggleMic,
-  entries,
-  blur,
-  keepHistory,
-  onRepeat,
-}) {
-  const [draft, setDraft] = useState('')
+/** Where the sentence goes, and what was said earlier. */
+export default function SidePanel({ dests, destKey, onDest, entries, blur, keepHistory, onRepeat }) {
   const recent = entries.slice(-8).reverse()
 
   return (
-    <aside className="side" aria-label="Where it goes and conversation">
+    <aside className="side" aria-label="Where it goes and earlier messages">
       <fieldset className="dest-list">
         <legend>Goes to</legend>
         {dests.map((d) => (
-          <label key={d.id} className="dest">
-            <input type="radio" name="dest" checked={dest === d.id} onChange={() => onDest(d.id)} />
+          <label key={d.key} className="dest">
+            <input type="radio" name="dest" checked={destKey === d.key} onChange={() => onDest(d)} />
             <span>
               <span className="dest-label">{d.label}</span>
               <span className="dest-hint">{d.hint}</span>
             </span>
           </label>
         ))}
+        <p className="fine dest-note">Bluetooth speakers show up here once they’re connected to this computer.</p>
       </fieldset>
-
-      <section className="partner" aria-label="What they said">
-        <div className="side-head">
-          <h2>They said</h2>
-          {partnerMicSupported && (
-            <button className="text-btn" onClick={onToggleMic} aria-pressed={partner.micOn}>
-              {partner.micOn ? (partner.listening ? 'Stop listening' : 'Starting…') : 'Listen to them'}
-            </button>
-          )}
-        </div>
-        <p className={`partner-text ${partner.text || partner.interim ? '' : 'muted'}`}>
-          {partner.interim ? <span className="interim">{partner.interim}</span> : partner.text || 'Nothing yet. Their question helps SilentVoice pick the right answer.'}
-        </p>
-        {partner.error && <p className="hint-warn">{partner.error}</p>}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (draft.trim()) onPartnerTyped(draft.trim())
-            setDraft('')
-          }}
-        >
-          <label className="sr-only" htmlFor="partner-input">Type what they said</label>
-          <input id="partner-input" className="input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Or type what they asked" />
-        </form>
-      </section>
 
       <section className="earlier" aria-label="Earlier">
         <div className="side-head">

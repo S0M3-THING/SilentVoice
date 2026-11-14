@@ -1,7 +1,7 @@
 """Tiny JSON-file storage for everything that must stay on this machine.
 
 - profile.json : the user's phrases (with usage counts), names, quick buttons, preferences
-- secrets.json : API keys (Groq, ElevenLabs). Never sent back to the browser.
+- secrets.json : API keys (Groq). Never sent back to the browser.
 - log.jsonl    : conversation log, so clinicians/family can review and export it
 
 All files live in backend/data/ (git-ignored). Override with SILENTVOICE_DATA_DIR.
@@ -22,12 +22,14 @@ from phrases import DEFAULT_PHRASES, DEFAULT_QUICK_BUTTONS, DEFAULT_QUIET_BUTTON
 
 DEFAULT_PREFERENCES: dict[str, Any] = {
     "use": "",                     # "" (not chosen yet) | care | quiet
-    "destination": "loud",         # loud | copy | share | show
+    "destination": "loud",         # loud (a speaker) | show (large on screen)
+    "speaker_id": "",              # browser audio-output device id; "" = the computer's default
     "privacy_blur": False,         # blur earlier lines until hovered/touched
     "keep_history": True,          # save the conversation log
     "auto_clear_minutes": 0,       # clear the screen after N idle minutes (0 = never)
-    "capture_mode": "auto",        # auto (hands-free) | tap | hold
-    "sensitivity": 0.5,            # 0..1 for hands-free motion trigger
+    "capture_mode": "hold",        # press and hold (Space or the button) while mouthing
+    "follow_lips": True,           # keep the lip slot centred on the mouth
+    "word_check": True,            # local text model re-ranks lip-reading guesses
     "recognition_mode": "fast",    # fast | accurate
     "phrases_only": False,         # closed-set mode: only ever output saved phrases
     "confirm_policy": "unsure",    # always | unsure | never
@@ -37,6 +39,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "voice_rate": 1.0,
     "voice_pitch": 1.0,
     "use_my_voice": False,
+    "voice_model": "qwen3",        # qwen3 (Qwen3-TTS) | cosyvoice (CosyVoice 2)
     "text_scale": 1.0,
     "high_contrast": False,
     "alert_sound": True,
@@ -90,7 +93,13 @@ class Store:
             defaults = _default_profile()
             for k, v in defaults.items():
                 prof.setdefault(k, v)
-            prof["preferences"] = {**DEFAULT_PREFERENCES, **(prof.get("preferences") or {})}
+            prefs = {**DEFAULT_PREFERENCES, **(prof.get("preferences") or {})}
+            # Options removed in later versions fall back to their replacements.
+            prefs["capture_mode"] = "hold"  # press and hold is the only way to read now
+            if prefs.get("destination") not in ("loud", "show"):
+                prefs["destination"] = "show" if prefs.get("use") == "quiet" else "loud"
+            prefs.pop("sensitivity", None)
+            prof["preferences"] = prefs
             return prof
 
     def update_profile(self, patch: dict[str, Any]) -> dict[str, Any]:
@@ -129,7 +138,7 @@ class Store:
                      "keep_history": True, "auto_clear_minutes": 0, "alert_sound": True, "text_scale": 1.1}
             buttons = copy.deepcopy(DEFAULT_QUICK_BUTTONS)
         else:
-            prefs = {"use": "quiet", "destination": "copy", "confirm_policy": "unsure", "privacy_blur": True,
+            prefs = {"use": "quiet", "destination": "show", "confirm_policy": "unsure", "privacy_blur": True,
                      "keep_history": False, "auto_clear_minutes": 2, "alert_sound": False, "text_scale": 1.0}
             buttons = copy.deepcopy(DEFAULT_QUIET_BUTTONS)
         return self.update_profile({"preferences": prefs, "quick_buttons": buttons, "onboarded": True})
@@ -183,8 +192,6 @@ class Store:
     def secrets_status(self) -> dict[str, bool]:
         return {
             "groq_api_key": bool(self.get_secret("groq_api_key")),
-            "elevenlabs_api_key": bool(self.get_secret("elevenlabs_api_key")),
-            "elevenlabs_voice_id": bool(self.get_secret("elevenlabs_voice_id")),
         }
 
     # ---------- conversation log ----------

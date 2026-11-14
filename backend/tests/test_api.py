@@ -45,7 +45,7 @@ def test_health_and_profile_defaults(make_client):
     assert h["model_state"] == "ready" and h["ai_configured"] is False
     prof = client.get("/api/profile").json()
     assert any(p["text"] == "I need the nurse." for p in prof["phrases"])
-    assert prof["preferences"]["capture_mode"] == "auto"
+    assert prof["preferences"]["capture_mode"] == "hold"
 
 
 def test_lipread_offline_matcher_and_flags(make_client):
@@ -128,7 +128,7 @@ def test_setup_quiet_and_care_defaults(make_client):
     quiet = client.post("/api/profile/setup", json={"use": "quiet"}).json()
     p = quiet["preferences"]
     assert quiet["onboarded"] is True
-    assert p["use"] == "quiet" and p["destination"] == "copy"
+    assert p["use"] == "quiet" and p["destination"] == "show"
     assert p["privacy_blur"] is True and p["keep_history"] is False and p["auto_clear_minutes"] == 2
     assert not any(b["urgent"] for b in quiet["quick_buttons"])
     care = client.post("/api/profile/setup", json={"use": "care"}).json()

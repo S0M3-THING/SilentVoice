@@ -224,6 +224,26 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .guess:hover { color: var(--act); }
 .fallback-links { display: flex; flex-wrap: wrap; gap: 4px 20px; padding-top: 8px; }
 
+/* ---------- centre column: they said, then your sentence ---------- */
+.center { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.partner-panel {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 20px 24px; border-radius: 14px; border: 2px solid var(--line-strong); background: var(--surface);
+}
+.partner-panel.has-text { border-color: var(--ink); }
+.partner-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.partner-head h2 { font-size: var(--fs-lead); }
+.partner-said { font-size: calc(clamp(1.5rem, 2.3vw, 2rem) * var(--scale)); line-height: 1.25; font-weight: 700; text-wrap: balance; }
+.partner-said.is-empty { font-size: var(--fs-body); font-weight: 400; color: var(--muted); }
+.partner-said .interim { color: var(--muted); font-style: italic; }
+.btn-small { min-height: 44px; padding: 6px 14px; gap: 8px; }
+.btn.is-on { border-color: var(--act); color: var(--act); background: var(--act-tint); }
+.dest-note { padding-top: 10px; }
+.use-compare { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.use-compare dt { font-weight: 700; margin-top: 8px; }
+.use-compare dd { margin: 0; color: var(--muted); max-width: 62ch; }
+.slot.is-tracked video { max-width: none; transition: left 0.12s linear, top 0.12s linear, width 0.3s ease-out, height 0.3s ease-out; }
+
 /* ---------- side panel ---------- */
 .side { display: flex; flex-direction: column; gap: 32px; }
 .side h2, .dest-list legend { font-size: var(--fs-lead); font-weight: 700; }
@@ -340,6 +360,16 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .phrase-admin li { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 2px 0; border-bottom: 1px solid var(--line); }
 .row-actions { display: flex; gap: 14px; }
 
+/* own voice */
+.passage {
+  margin: 0; padding: 16px 18px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+  font-family: var(--serif); font-size: var(--fs-lead); line-height: 1.55; max-width: 60ch;
+}
+.check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--act); flex: none; }
+textarea.input { min-height: 0; resize: vertical; line-height: 1.45; font-family: inherit; }
+.sub audio { width: 100%; max-width: 420px; }
+
 /* setup */
 .setup { max-width: 560px; margin: 0 auto; padding: 72px 24px 48px; display: flex; flex-direction: column; gap: 28px; }
 .setup-title { font-family: var(--serif); font-weight: 500; font-size: calc(2.4rem * var(--scale)); line-height: 1.12; }
@@ -378,6 +408,7 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   .layout { grid-template-columns: 1fr; padding: 16px; gap: 24px; }
   .camera { position: static; }
   .sentence { padding: 22px; min-height: 0; }
+  .partner-panel { padding: 16px; }
   .side { display: flex; }
   .settings { grid-template-columns: 1fr; }
   .settings-tabs { flex-direction: row; flex-wrap: wrap; }

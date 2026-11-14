@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import Modal from './Modal.jsx'
-import { api } from '../lib/api.js'
-import { listSystemVoices, speak } from '../lib/speech.js'
+import YourVoice from './YourVoice.jsx'
+import { listBrowserVoices, listMacVoices, speak } from '../lib/speech.js'
 
 const TABS = ['How you use it', 'Reading', 'Voice', 'Privacy', 'Phrases and names', 'Display']
 
@@ -49,28 +49,55 @@ function UseTab({ prefs, onSetup }) {
           ['quiet', 'I need to stay quiet'],
         ]}
       />
+      <dl className="use-compare">
+        <dt>I can’t use my voice</dt>
+        <dd>
+          Your voice isn’t working right now: after surgery, with a breathing tube, after a stroke, or with a
+          condition that affects speech. SilentVoice speaks for you out loud, with shortcuts for the nurse, pain and
+          breathing.
+        </dd>
+        <dt>I need to stay quiet</dt>
+        <dd>
+          Your voice works, but speaking would disturb people or be overheard: a library, an open office, a train,
+          or when you need to share something private, like a password, PIN, account number or medical detail,
+          without anyone nearby hearing it. Sentences are shown on screen instead of spoken, earlier lines blur, and
+          nothing is saved.
+        </dd>
+      </dl>
     </div>
   )
 }
 
-function ReadingTab({ prefs, setPref }) {
+function wordCheckNote(wc) {
+  if (!wc) return ''
+  if (!wc.available) return wc.reason
+  if (wc.state === 'loading') return 'Getting the word check ready. The first time downloads the model (Gemma 4, about 3.6 GB).'
+  if (wc.state === 'error') return `The word check didn’t load: ${wc.reason}`
+  if (wc.state === 'ready') return `Ready (${wc.model}). Runs on this computer; nothing is sent anywhere.`
+  return ''
+}
+
+function ReadingTab({ prefs, setPref, health }) {
+  const wc = health?.word_check
   return (
     <div className="stack">
-      <Choice
-        label="Start reading"
-        value={prefs.capture_mode}
-        onChange={(v) => setPref('capture_mode', v)}
-        options={[
-          ['auto', 'When I move'],
-          ['tap', 'Tap to start and stop'],
-          ['hold', 'Press and hold'],
-        ]}
+      <p className="muted">
+        SilentVoice reads your lips only while you hold the button or the Space bar, so it never picks up
+        movement you didn’t mean.
+      </p>
+      <Toggle
+        label="Check guesses with a text model"
+        hint="A text model on this computer picks the guess that makes the most sense, using what the other person just said (“coffee”, not “toffee”, after “Would you like a drink?”). When the reading is unclear, it rewrites it into clear sentences that look the same on the lips. Whenever it changes what the lips showed, SilentVoice asks you first."
+        checked={prefs.word_check !== false}
+        onChange={(v) => setPref('word_check', v)}
       />
-      <label className="field">
-        <span>How easily “When I move” starts</span>
-        <input type="range" min="0" max="1" step="0.05" value={prefs.sensitivity} onChange={(e) => setPref('sensitivity', Number(e.target.value))} />
-        <span className="muted small">Raise it if small movements aren’t noticed. Lower it if it starts on its own.</span>
-      </label>
+      {prefs.word_check !== false && wordCheckNote(wc) && <p className="muted small">{wordCheckNote(wc)}</p>}
+      <Toggle
+        label="Keep my mouth in the middle"
+        hint="The lip window follows your mouth, so you can shift around in bed or in your chair."
+        checked={prefs.follow_lips !== false}
+        onChange={(v) => setPref('follow_lips', v)}
+      />
       <Choice
         label="Lip reading"
         value={prefs.recognition_mode}
@@ -92,36 +119,31 @@ function ReadingTab({ prefs, setPref }) {
   )
 }
 
-function VoiceTab({ prefs, setPref, voiceStatus, onVoiceChanged, secrets, onSaveSecrets }) {
-  const [voices, setVoices] = useState(listSystemVoices())
-  const [files, setFiles] = useState([])
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [key, setKey] = useState('')
+function VoiceTab({ prefs, setPref, voiceStatus, onVoiceChanged, speakerId }) {
+  const [voices, setVoices] = useState([])
 
   useEffect(() => {
-    const update = () => setVoices(listSystemVoices())
-    window.speechSynthesis?.addEventListener?.('voiceschanged', update)
-    return () => window.speechSynthesis?.removeEventListener?.('voiceschanged', update)
-  }, [])
-
-  const clone = async () => {
-    setBusy(true)
-    setMsg('')
-    try {
-      onVoiceChanged(await api.cloneVoice(files, 'My SilentVoice'))
-      setPref('use_my_voice', true)
-      setMsg('Your voice is ready.')
-      setFiles([])
-    } catch (e) {
-      setMsg(e.message)
-    } finally {
-      setBusy(false)
+    // The Mac's voices when the server runs on a Mac (they can play on any speaker),
+    // otherwise the browser's own voices.
+    let alive = true
+    const fromBrowser = () => alive && setVoices(listBrowserVoices().map((v) => ({ name: v.name })))
+    listMacVoices().then((mac) => {
+      if (!alive) return
+      if (mac.length) setVoices(mac)
+      else {
+        fromBrowser()
+        window.speechSynthesis?.addEventListener?.('voiceschanged', fromBrowser)
+      }
+    })
+    return () => {
+      alive = false
+      window.speechSynthesis?.removeEventListener?.('voiceschanged', fromBrowser)
     }
-  }
+  }, [])
 
   return (
     <div className="stack">
+      <YourVoice prefs={{ ...prefs, speaker_id: speakerId }} setPref={setPref} voiceStatus={voiceStatus} onVoiceChanged={onVoiceChanged} />
       <Choice
         label="Before a sentence goes anywhere"
         value={prefs.confirm_policy}
@@ -133,7 +155,7 @@ function VoiceTab({ prefs, setPref, voiceStatus, onVoiceChanged, secrets, onSave
         ]}
       />
       <label className="field">
-        <span>Device voice</span>
+        <span>Computer voice, used when your own voice isn’t set up</span>
         <select className="input" value={prefs.voice_name} onChange={(e) => setPref('voice_name', e.target.value)}>
           <option value="">Default</option>
           {voices.map((v) => (
@@ -141,54 +163,15 @@ function VoiceTab({ prefs, setPref, voiceStatus, onVoiceChanged, secrets, onSave
           ))}
         </select>
       </label>
-      <div className="pair">
-        <label className="field">
-          <span>Speed</span>
-          <input type="range" min="0.6" max="1.4" step="0.05" value={prefs.voice_rate} onChange={(e) => setPref('voice_rate', Number(e.target.value))} />
-        </label>
-        <label className="field">
-          <span>Pitch</span>
-          <input type="range" min="0.6" max="1.4" step="0.05" value={prefs.voice_pitch} onChange={(e) => setPref('voice_pitch', Number(e.target.value))} />
-        </label>
-      </div>
+      <label className="field">
+        <span>Speed of the computer voice</span>
+        <input type="range" min="0.6" max="1.4" step="0.05" value={prefs.voice_rate} onChange={(e) => setPref('voice_rate', Number(e.target.value))} />
+      </label>
       <div>
-        <button className="btn" onClick={() => speak('Hello, this is how I sound.', prefs, voiceStatus)}>Play a sample</button>
+        <button className="btn" onClick={() => speak('Hello, this is how I sound.', { ...prefs, use_my_voice: false, speaker_id: speakerId }, voiceStatus)}>
+          Play the computer voice
+        </button>
       </div>
-
-      <section className="sub">
-        <h3>Speak in your own voice</h3>
-        <p className="muted small">
-          Upload about a minute of old recordings of your voice, such as voicemails or videos. SilentVoice makes a copy of
-          your voice with ElevenLabs. Sentences you’ve said once keep working offline.
-        </p>
-        {!secrets.elevenlabs_api_key ? (
-          <form className="inline" onSubmit={(e) => { e.preventDefault(); onSaveSecrets({ elevenlabs_api_key: key }); setKey('') }}>
-            <label className="sr-only" htmlFor="el-key">ElevenLabs API key</label>
-            <input id="el-key" className="input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="ElevenLabs API key" />
-            <button className="btn" disabled={!key.trim()}>Save key</button>
-          </form>
-        ) : voiceStatus?.has_voice ? (
-          <>
-            <Toggle label="Use my voice" checked={prefs.use_my_voice} onChange={(v) => setPref('use_my_voice', v)} />
-            <div>
-              <button className="btn btn-danger" onClick={async () => onVoiceChanged(await api.deleteVoice())}>Delete my voice copy</button>
-            </div>
-          </>
-        ) : (
-          <div className="stack">
-            <label className="file-pick">
-              <span>{files.length ? `${files.length} recording${files.length > 1 ? 's' : ''} chosen` : 'Choose recordings'}</span>
-              <input type="file" accept="audio/*,video/*" multiple onChange={(e) => setFiles([...e.target.files])} />
-            </label>
-            <div>
-              <button className="btn btn-primary" disabled={!files.length || busy} onClick={clone}>
-                {busy ? 'Making your voice…' : 'Make my voice'}
-              </button>
-            </div>
-          </div>
-        )}
-        {msg && <p className="small">{msg}</p>}
-      </section>
     </div>
   )
 }
@@ -359,7 +342,7 @@ export default function Settings(props) {
         </div>
         <div className="settings-panel">
           {tab === 'How you use it' && <UseTab prefs={prefs} onSetup={props.onSetup} />}
-          {tab === 'Reading' && <ReadingTab prefs={prefs} setPref={setPref} />}
+          {tab === 'Reading' && <ReadingTab prefs={prefs} setPref={setPref} health={props.health} />}
           {tab === 'Voice' && <VoiceTab prefs={prefs} setPref={setPref} {...props} />}
           {tab === 'Privacy' && <PrivacyTab prefs={prefs} setPref={setPref} {...props} />}
           {tab === 'Phrases and names' && <PhrasesTab profile={profile} onSaveProfile={props.onSaveProfile} />}
