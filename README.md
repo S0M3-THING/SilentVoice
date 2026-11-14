@@ -1,127 +1,97 @@
 # SilentVoice
 
-SilentVoice is a hackathon prototype for people who can mouth words but cannot
-reliably voice them. The MVP aims to turn a short, silently mouthed reply into
-editable suggestions and speak the user's confirmed message. For example, after a
-partner asks “Would you like tea?”, the partner's words can help rank “Tea, please”
-among plausible replies.
+SilentVoice is a web app that reads your lips through a webcam, for anyone who can't or shouldn't make sound:
+a patient after a tracheostomy or laryngectomy, someone with vocal cord paralysis or early ALS, or a student in
+a library who just needs to stay quiet.
 
-## What runs today
+Everyone uses the same screen: **mouth it, check it, choose where it goes**. A sentence can go
+**out loud** (in your own voice if you like), be **copied**, **shared** through the device's share menu, or shown
+**on screen** in large text. A single first-run question ("I can't use my voice right now" or "I can talk, but
+need to stay quiet") picks sensible starting settings: shortcuts, default destination, confirmation, privacy blur
+and history. Everything can be changed later.
 
-The React demo sends three labeled sample hypotheses and typed partner context
-to FastAPI. The API returns up to three ranked candidates. The user can pick,
-edit, or type a reply and explicitly press **Speak message** to use browser
-text-to-speech (TTS). The starter requires no camera, microphone, model weights,
-or API keys. Webcam lip-reading, Whisper, learned reranking, and personal voice
-synthesis are planned integrations.
+Everything runs on your computer. The camera video is read and deleted straight away. It is never saved or uploaded.
 
-## MVP architecture
+## Why it's built this way
 
-| Stage | Design |
+The closest earlier product, SRAVI (an ICU lip-reading app), reached only 22–35% accuracy in a 2023–24
+hospital study. Patients found it hard to use, and it depended on hospital Wi-Fi. Its maker, Liopa, has since been liquidated.
+Patients who suddenly lose their voice most often need to talk about pain, breathing/suction, the bathroom, and their
+treatment plans, and many report anxiety and frustration when they can't. SilentVoice is designed around those lessons:
+
+| Problem with earlier tools | What SilentVoice does |
 | --- | --- |
-| Capture | React, Vite, and TypeScript provide push-to-record webcam capture, framing feedback, and separate opt-in partner audio capture. Send one short video clip per turn with no audio track. |
-| Visual speech recognition | FastAPI calls a local [Chaplin](https://github.com/amanvirparhar/chaplin) / [Auto-AVSR](https://github.com/mpc001/auto_avsr) adapter. Crop and align the mouth region using the model's preprocessing and expose up to ten decoded hypotheses with normalized scores. Check whether the decoder exposes an n-best list before committing to reranking. |
-| Partner transcription | Use [Whisper](https://github.com/openai/whisper) on the partner's audible speech. Keep only the last confirmed prompt in session memory and allow manual entry and correction. |
-| Context reranking | Combine visual scores, the recent partner prompt, and optional user-supplied phrases. The starter adds small token-overlap and phrase-match bonuses. A later language model can reorder existing candidate IDs while preserving their text and the original visual-only ranking for comparison. |
-| Confirmation and speech | Show up to three large, keyboard-accessible choices and an editable text field. Speak only on an explicit user action. Use browser TTS first and consider a consented personal voice as a separate opt-in. |
+| Lip reading is often wrong | Shows 3 guesses and **None of these**, which opens a phrase board, spelling keyboard or yes/no. You're never stuck. |
+| Wrong guesses put words in your mouth | Asks **"Is this what you said?"** when unsure, flags AI-corrected words, and never asserts an urgent phrase from a weak match. |
+| Needed Wi-Fi / a server | Lip reading and phrase matching run **offline** on the laptop. AI correction is optional. |
+| Nobody nearby should see or hear it | In quiet setups nothing is spoken or saved, earlier lines blur, the screen clears after 2 minutes, and the camera shows only your mouth (the "lip slot"). |
+| Hard to use when very unwell | **Hands-free** mode starts when your lips move and stops when you pause. Tap and hold modes are also available, plus one-tap urgent buttons. |
+| Urgent needs were slow | An always-visible bar: Nurse, Pain (0–10 scale + body area), Can't breathe, Suction, Bathroom, Water, Yes, No. Urgent messages beep first. |
+| Generic robot voice | Speak in **your own voice** (from ~1 min of old recordings via ElevenLabs), cached so common phrases work offline. |
+| Didn't know the context | Listens to the **partner's** question (or lets them type it) and uses it to pick the right answer. |
+| Small screens, hard to read | Hyperlegible type, adjustable text size, high-contrast mode, and **Show large** with a flip for the person across the bed. |
+| Nothing for the care team | A conversation log with **export** (TXT/CSV) for clinicians and family. |
+| Same for everyone | Personal phrases, names it should know, and it learns which phrases you use most. **Only my saved phrases** mode gives the most reliable results. |
 
-`GET /health` checks whether the API is running. `POST /api/rerank` accepts
-`candidates` (objects with `text` and `visual_score` from 0 to 1), optional
-`partner_text`, and optional `personal_phrases`. It returns the highest-ranked
-candidates in the same shape. Visual scores are preserved and should be treated
-as relative scores until calibrated on held-out clips.
+## Project structure
 
-## Local setup
-
-Use Python 3.10+ and Node.js 22.12+ with npm. Run these commands from the
-repository root in two terminals.
-
-**API**
-
-```sh
-cp .env.example .env
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r backend/requirements.txt
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+SilentVoice/
+├── backend/                 FastAPI server (Python 3.11)
+│   ├── app.py               API routes; model loads in the background
+│   ├── vsr_service.py       Lip reading (Auto-AVSR via Chaplin), top-10 guesses
+│   ├── context_selector.py  Picks the final sentence (optional Groq LLM, offline fallback)
+│   ├── phrases.py           Phrase bank, look-alike-letter matcher, urgent detection
+│   ├── store.py             Local profile, keys and conversation log (backend/data/)
+│   ├── voice.py             Own-voice cloning + cached speech (ElevenLabs)
+│   ├── tests/               pytest suite (runs without the model)
+│   └── vendor/chaplin/      Lip-reading model code (cloned by setup.sh, git-ignored)
+├── frontend/                React + Vite app
+│   ├── src/App.jsx          Main screen
+│   ├── src/components/      Setup, shortcuts, lip slot camera, sentence, side panel, board, pain scale, settings
+│   ├── src/lib/             API client, speech, hands-free capture, partner mic
+│   └── public/fonts/        Atkinson Hyperlegible (bundled for offline use)
+├── setup.sh                 One-time install
+└── start.sh                 Runs backend + frontend
 ```
 
-**Frontend**
+## Run it
 
-```sh
-cd frontend
-npm install
-npm run dev
+Needs macOS or Linux, Python 3.11, Node 18+, ffmpeg (`brew install ffmpeg`) and Chrome.
+
+```bash
+./setup.sh      # once
+./start.sh      # then open http://localhost:5173 in Chrome
 ```
 
-Open http://localhost:5173. Select **Rank sample replies** and confirm that
-“Tea, please.” ranks first with the default prompt. Pick a reply, edit it if
-needed, and press **Speak message**. Try a typed reply with the API stopped
-to verify the fallback. Browser speech playback depends on available voices.
+On first start the lip-reading weights (~1 GB, `Amanvir/LRS3_V_WER19.1`) download from Hugging Face.
+While the model loads, the phrase board, spelling, quick buttons and partner view already work.
 
-API docs are at http://127.0.0.1:8000/docs. Check the API with
-`curl -fsS http://127.0.0.1:8000/health` and run `npm run build` in
-`frontend/` to type-check and build the client.
+Optional keys can be added in **Settings → AI and privacy / Voice**. They're stored in `backend/data/secrets.json`
+and are never sent to the browser.
+- `GROQ_API_KEY`: smarter correction of look-alike words using the conversation. Only text is sent, never video.
+- `ELEVENLABS_API_KEY`: speak in your own cloned voice.
 
-## Environment variables
+## Tests
 
-| Variable | Location | Default |
+```bash
+cd backend && .venv/bin/python -m pytest tests
+cd frontend && npm run build
+```
+
+## API
+
+| Method | Path | Purpose |
 | --- | --- | --- |
-| `FRONTEND_ORIGIN` | Root `.env` | `http://localhost:5173` |
-| `VITE_API_URL` | `frontend/.env.local` | `http://127.0.0.1:8000` |
+| GET | `/api/health` | Server, model and voice status |
+| GET/PUT | `/api/profile` | Phrases, names, quick buttons, preferences |
+| POST | `/api/lipread` | Video clip → sentence, confidence, 3 guesses, `needs_confirmation`, `urgent` |
+| GET/POST/DELETE | `/api/log` | Conversation log |
+| GET | `/api/log/export?format=txt\|csv` | Export for the care team |
+| GET/PUT | `/api/settings/secrets` | Set keys (only shows whether they're set) |
+| POST | `/api/voice/clone`, `/api/tts` | Own voice |
 
-Use the exact origin displayed in the browser, including its port. Vite exposes
-`VITE_*` values to browsers. Store any future provider keys in a server-side
-environment file and document the variable names without adding real values.
+## Limits
 
-## Project layout
-
-```text
-.
-├── .env.example
-├── .gitignore
-├── README.md
-├── backend/
-│   ├── main.py
-│   └── requirements.txt
-└── frontend/
-    ├── index.html
-    ├── package.json
-    ├── tsconfig.json
-    └── src/
-        ├── main.tsx
-        └── style.css
-```
-
-## Hackathon milestones
-
-1. **30-minute feasibility check.** Try the visual-only checkpoint with two
-   consenting teammates, five short phrases each, and one unfamiliar prompt.
-   Record top-1 and top-3 phrase matches and clip-to-suggestion latency. Agree on
-   a demo threshold before testing. If it misses the threshold, narrow the
-   phrase set and label any fixture-based demo clearly.
-2. **Connect the model.** Get reliable mouth crops, handle missing faces and
-   unsupported clips, and pass decoder candidates to the existing API shape.
-   Keep heavy model dependencies separate from the starter requirements.
-3. **Add partner context.** Wire opt-in Whisper and compare top-1/top-3 accuracy
-   with and without context on the same clips, including misleading prompts.
-4. **Rehearse the user flow.** Test keyboard navigation, edits, retries, no
-   audio output, and the manual fallback. Measure median and p95 response time
-   on the machine used for the demo.
-
-## Limitations and ethics
-
-Many sounds look identical on the lips. Lighting, camera angle, occlusion,
-language, and differences in articulation can affect results. Benchmark
-performance does not establish accuracy for people with laryngectomy or
-tracheostomy. This prototype is intended for low-stakes demos and has no
-clinical validation or emergency-use evaluation.
-
-Keep the user in control of the final words. Make recording visible and
-opt-in, get the partner's consent before transcribing, and provide a usable
-typed fallback. Process clips locally where feasible and discard recordings
-after inference by default. Review and disclose any external service's data
-handling before routing media to it. Some browser voices use network services.
-Keep recordings, model weights, and voice samples out of Git. For personal
-voice synthesis, obtain explicit authorization from the voice owner and
-provide a way to revoke consent and delete the source samples.
+SilentVoice is a communication aid, not a medical device. It is not a replacement for a nurse-call system.
+Lip reading works best with good front lighting, a steady face and short sentences. English only for now.
