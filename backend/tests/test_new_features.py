@@ -140,4 +140,77 @@ def test_old_settings_are_migrated(tmp_path):
     prof["preferences"].update({"capture_mode": "auto", "destination": "copy", "use": "quiet", "sensitivity": 0.5})
     (tmp_path / "profile.json").write_text(json.dumps(prof))
     p = store.get_profile()["preferences"]
-    assert p["capture_mode"] == "tap" and p["destination"] == "show" and "sensitivity" not in p
+    assert p["capture_mode"] == "hold" and p["destination"] == "show" and "sensitivity" not in p
+
+
+# ---------------------------------------------------------------- names
+from phrases import name_variants, pretty  # noqa: E402
+from voice_engine import CosyVoiceEngine  # noqa: E402
+import sys  # noqa: E402
+
+
+def test_name_variants_swap_look_alike_words():
+    out = name_variants([{"text": "can you call a cash", "prob": 0.6}, {"text": "can you call a cat", "prob": 0.4}], ["Akash"])
+    texts = [c["text"] for c in out]
+    assert texts[0] == "can you call Akash"
+    assert "can you call a cash" in texts  # the lips' own guess stays as an alternative
+
+
+def test_name_variants_capitalise_exact_names_and_ignore_far_words():
+    out = name_variants([{"text": "is priya here", "prob": 0.9}], ["Priya", "Sam"])
+    assert [c["text"] for c in out] == ["is Priya here"]
+    assert name_variants([{"text": "i want ham", "prob": 1}], ["Sam"]) == [{"text": "i want ham", "prob": 1}]
+
+
+def test_pretty_keeps_names():
+    assert pretty("can you call Akash") == "Can you call Akash"
+    assert pretty("i think i'm fine") == "I think I'm fine"
+
+
+def test_names_reach_the_lip_reading(tmp_path):
+    checker = FakeChecker(liked=("Akash",))
+    client, _ = _client(tmp_path, checker, cands=[{"text": "please call a cash", "prob": 0.7}, {"text": "please call a cab", "prob": 0.3}])
+    client.put("/api/profile", json={"names": ["Akash", "Tejas"]})
+    r = client.post("/api/lipread", files={"video": ("c.webm", b"x", "video/webm")}).json()["result"]
+    assert r["text"] == "Please call Akash"
+    assert r["needs_confirmation"] is True  # a swapped-in name is always checked with the user
+    assert "Akash, Tejas" in checker.contexts[0]
+
+
+# ---------------------------------------------------------------- CosyVoice
+def test_cosyvoice_engine_talks_to_its_helper(tmp_path):
+    import numpy as np
+    import wave
+
+    ref = tmp_path / "ref.wav"
+    with wave.open(str(ref), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(b"\0\0" * 24000)
+    eng = CosyVoiceEngine(python=sys.executable, fake=True)
+    try:
+        assert eng.availability() == (True, "")
+        audio, rate = eng.synthesize("Hello there.", str(ref), "hello")
+        assert rate == 24000 and len(audio) == 7200 and np.abs(audio).max() > 0.1
+        audio2, _ = eng.synthesize("Again.", str(ref), "hello")  # same helper, still alive
+        assert len(audio2) == 7200
+    finally:
+        eng.close()
+
+
+def test_cosyvoice_not_installed_explains(tmp_path):
+    eng = CosyVoiceEngine(python=tmp_path / "missing" / "python", fake=True)
+    ok, why = eng.availability()
+    assert not ok and "setup.sh" in why
+
+
+def test_switch_voice_model(tmp_path):
+    from test_voice import FakeEngine
+
+    store = Store(tmp_path)
+    a, b = FakeEngine(), FakeEngine()
+    b.name, b.model_id = "Fake Cosy", "fake/cosy"
+    client = TestClient(create_app(store=store, autoload=False, voice_engines={"qwen3": a, "cosyvoice": b},
+                                   word_checker=FakeChecker(), mouth_locator=FakeMouth()))
+    v = client.get("/api/voice").json()
+    assert v["engine_key"] == "qwen3" and [e["key"] for e in v["engines"]] == ["qwen3", "cosyvoice"]
+    client.put("/api/profile", json={"preferences": {"voice_model": "cosyvoice"}})
+    assert client.get("/api/voice").json()["engine"] == "Fake Cosy"

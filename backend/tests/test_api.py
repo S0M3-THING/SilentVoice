@@ -45,7 +45,7 @@ def test_health_and_profile_defaults(make_client):
     assert h["model_state"] == "ready" and h["ai_configured"] is False
     prof = client.get("/api/profile").json()
     assert any(p["text"] == "I need the nurse." for p in prof["phrases"])
-    assert prof["preferences"]["capture_mode"] == "tap"
+    assert prof["preferences"]["capture_mode"] == "hold"
 
 
 def test_lipread_offline_matcher_and_flags(make_client):

@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import wavfile
 
-from voice_engine import EngineUnavailable, VoiceEngine, default_engine
+from voice_engine import CosyVoiceEngine, EngineUnavailable, Qwen3MLXEngine, VoiceEngine
 
 REF_RATE = 24000
 MIN_SPEECH_SECONDS = 5.0
@@ -129,9 +129,17 @@ def _to_wav_bytes(audio: np.ndarray, rate: int) -> bytes:
 
 
 class VoiceService:
-    def __init__(self, store, engine: VoiceEngine | None = None):
+    def __init__(self, store, engine: VoiceEngine | None = None, engines: dict[str, VoiceEngine] | None = None):
         self.store = store
-        self.engine = engine or default_engine()
+        if engines:
+            self.engines = dict(engines)
+        elif engine is not None:
+            self.engines = {"qwen3": engine}
+        else:
+            qwen = Qwen3MLXEngine()
+            self.engines = {"qwen3": qwen, "cosyvoice": CosyVoiceEngine(transcriber=qwen)}
+        wanted = (store.get_profile().get("preferences") or {}).get("voice_model", "qwen3")
+        self.choice = wanted if wanted in self.engines else next(iter(self.engines))
         self.dir = store.dir / "voice"
         self.cache_dir = self.dir / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -140,6 +148,21 @@ class VoiceService:
         self.engine_state = "idle"  # idle | loading | ready | error
         self.engine_error = ""
         self._state_lock = threading.Lock()
+
+    @property
+    def engine(self) -> VoiceEngine:
+        return self.engines[self.choice]
+
+    def select(self, key: str) -> None:
+        """Switch voice model (Qwen3-TTS or CosyVoice). Sentences are cached per model."""
+        if key not in self.engines or key == self.choice:
+            return
+        with self._state_lock:
+            self.choice = key
+            self.engine_state = "idle"
+            self.engine_error = ""
+        if self.has_voice():
+            self.warm_up()
 
     # ------------------------------------------------------------------ profile
     def _profile(self) -> dict:
@@ -158,6 +181,11 @@ class VoiceService:
         ok, why = self.engine.availability()
         prof = self._profile()
         return {
+            "engine_key": self.choice,
+            "engines": [
+                {"key": k, "name": e.name, "available": e.availability()[0], "reason": e.availability()[1]}
+                for k, e in self.engines.items()
+            ],
             "engine": self.engine.name,
             "model": self.engine.model_id,
             "available": ok,

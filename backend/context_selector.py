@@ -23,7 +23,7 @@ import httpx
 
 from starlette.concurrency import run_in_threadpool
 
-from phrases import confidence_label, normalize_text, rank_locally
+from phrases import confidence_label, name_variants, normalize_text, rank_locally
 from word_check import check_guesses
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -75,7 +75,9 @@ async def select_best_hypothesis(
     raw_candidates = vsr_candidates
     check = None
     if not closed_set and vsr_candidates:
-        check = await run_in_threadpool(check_guesses, checker, vsr_candidates, partner_text, history)
+        # Saved names are hard to lip-read: add guesses with look-alike words swapped for them.
+        vsr_candidates = name_variants(vsr_candidates, names or [])
+        check = await run_in_threadpool(check_guesses, checker, vsr_candidates, partner_text, history, names)
         if check:
             vsr_candidates = check["candidates"]
 
@@ -96,7 +98,8 @@ async def select_best_hypothesis(
 
     def _local() -> dict:
         res = rank_locally(vsr_candidates, phrases, partner_text=partner_text, closed_set=closed_set, usage=usage)
-        res["repaired"] = False
+        # A name swapped in is a change to what the lips said, so it gets checked with the user.
+        res["repaired"] = bool(names) and not closed_set and _is_repaired(res.get("text", ""), raw_candidates, phrases)
         return _finish(res)
 
     if closed_set or not vsr_candidates:

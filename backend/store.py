@@ -27,7 +27,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "privacy_blur": False,         # blur earlier lines until hovered/touched
     "keep_history": True,          # save the conversation log
     "auto_clear_minutes": 0,       # clear the screen after N idle minutes (0 = never)
-    "capture_mode": "tap",         # tap (start/stop) | hold
+    "capture_mode": "hold",        # press and hold (Space or the button) while mouthing
     "follow_lips": True,           # keep the lip slot centred on the mouth
     "word_check": True,            # local text model re-ranks lip-reading guesses
     "recognition_mode": "fast",    # fast | accurate
@@ -39,6 +39,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "voice_rate": 1.0,
     "voice_pitch": 1.0,
     "use_my_voice": False,
+    "voice_model": "qwen3",        # qwen3 (Qwen3-TTS) | cosyvoice (CosyVoice 2)
     "text_scale": 1.0,
     "high_contrast": False,
     "alert_sound": True,
@@ -94,8 +95,7 @@ class Store:
                 prof.setdefault(k, v)
             prefs = {**DEFAULT_PREFERENCES, **(prof.get("preferences") or {})}
             # Options removed in later versions fall back to their replacements.
-            if prefs.get("capture_mode") not in ("tap", "hold"):
-                prefs["capture_mode"] = "tap"
+            prefs["capture_mode"] = "hold"  # press and hold is the only way to read now
             if prefs.get("destination") not in ("loud", "show"):
                 prefs["destination"] = "show" if prefs.get("use") == "quiet" else "loud"
             prefs.pop("sensitivity", None)

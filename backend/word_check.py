@@ -21,6 +21,8 @@ import platform
 import threading
 import time
 
+from mlx_guard import MLX_LOCK
+
 DEFAULT_MODEL = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 WEIGHT = 1.0  # how much the text model counts against the lip-reading score
 MAX_CANDIDATES = 5
@@ -31,9 +33,12 @@ PREAMBLE = (
 )
 
 
-def build_context(partner_text: str = "", history: list[dict] | None = None) -> str:
+def build_context(partner_text: str = "", history: list[dict] | None = None, names: list[str] | None = None) -> str:
     """The conversation so far, ending where the user's sentence starts."""
     lines = [PREAMBLE]
+    names = [n.strip() for n in (names or []) if n and n.strip()]
+    if names:
+        lines.append(f"People they often mention: {', '.join(names[:20])}.\n")
     for h in (history or [])[-4:]:
         text = str(h.get("text", "")).strip()
         if text:
@@ -96,9 +101,16 @@ class MLXWordChecker:
                 return
             self.state = "loading"
             try:
+                from huggingface_hub import snapshot_download
                 from mlx_lm import load
 
-                self._model, self._tok = load(self.model_id)
+                # Download first without holding the GPU lock, so your voice keeps working meanwhile.
+                path = snapshot_download(
+                    self.model_id,
+                    allow_patterns=["*.json", "*.safetensors", "*.py", "*.model", "*.tiktoken", "*.txt", "*.jinja"],
+                )
+                with MLX_LOCK:
+                    self._model, self._tok = load(path)
                 self.state, self.error = "ready", ""
             except Exception as exc:  # download failed, out of memory...
                 self.state, self.error = "error", f"{type(exc).__name__}: {exc}"
@@ -114,7 +126,10 @@ class MLXWordChecker:
         """Average log-probability per token of each sentence (plus a line end) after `context`."""
         import mlx.core as mx
 
-        with self._lock:
+        # Don't hold up the reading if the GPU is busy (say, making your voice): skip the check.
+        if not MLX_LOCK.acquire(timeout=3):
+            raise TimeoutError("GPU busy")
+        try:
             prefix = list(self._tok.encode(context))
             scores = []
             for s in sentences:
@@ -129,6 +144,8 @@ class MLXWordChecker:
                 picked = mx.take_along_axis(logp[start - 1 : len(ids) - 1], targets[:, None], axis=-1)
                 scores.append(float(picked.mean().item()))
             return scores
+        finally:
+            MLX_LOCK.release()
 
     def status(self) -> dict:
         ok, why = self.availability()
@@ -144,7 +161,9 @@ def _shared_prefix(a: list[int], b: list[int]) -> int:
     return n
 
 
-def check_guesses(checker, candidates: list[dict], partner_text: str = "", history: list[dict] | None = None) -> dict | None:
+def check_guesses(
+    checker, candidates: list[dict], partner_text: str = "", history: list[dict] | None = None, names: list[str] | None = None
+) -> dict | None:
     """Rescore lip-reading guesses with the text model. None when the checker isn't ready."""
     if checker is None or not getattr(checker, "ready", False) or len(candidates) < 2:
         return None
@@ -153,7 +172,7 @@ def check_guesses(checker, candidates: list[dict], partner_text: str = "", histo
     if len(cands) < 2:
         return None
     try:
-        scores = checker.score(build_context(partner_text, history), [c["text"] for c in cands])
+        scores = checker.score(build_context(partner_text, history, names), [c["text"] for c in cands])
     except Exception:
         return None
     ranked = blend(cands, scores)

@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { slotVideoStyle } from '../lib/useMouthTracker.js'
 
-const MODES = [
-  ['tap', 'Tap to start and stop'],
-  ['hold', 'Press and hold'],
-]
-
 function lightingHint(brightness) {
   if (brightness == null) return ''
   if (brightness < 55) return 'It’s too dark to see your lips. Face a lamp or window.'
@@ -33,8 +28,6 @@ export default function CameraPanel({
   videoRef,
   cameraError,
   capture,
-  mode,
-  onModeChange,
   busy,
   modelState,
   unmirror,
@@ -44,7 +37,7 @@ export default function CameraPanel({
   const [full, setFull] = useState(false)
   const slotRef = useRef(null)
   const slotSize = useSize(slotRef)
-  const { recording, seconds, level, brightness, start, stop, toggle } = capture
+  const { recording, seconds, level, brightness, start, stop } = capture
   const hint = lightingHint(brightness)
   const video = videoRef.current
   const aspect = video?.videoWidth ? video.videoWidth / video.videoHeight : 4 / 3
@@ -59,22 +52,33 @@ export default function CameraPanel({
         : 'Lip reading is starting. Shortcuts, phrases and spelling already work.'
   else if (busy === 'reading') status = 'Reading your lips…'
   else if (busy === 'confirm') status = 'Check the sentence before it goes anywhere.'
-  else if (recording) status = `Watching your lips: ${seconds.toFixed(1)} s`
-  else if (mode === 'tap') status = 'Press Start, mouth your sentence, then press Done.'
-  else status = 'Hold the button while you mouth your sentence.'
+  else if (recording) status = `Watching your lips: ${seconds.toFixed(1)} s. Let go when you’re done.`
+  else status = 'Hold the button or the Space bar while you mouth your sentence, then let go.'
 
   const disabled = Boolean(cameraError) || modelState !== 'ready' || busy === 'reading'
-  const holdProps =
-    mode === 'hold'
-      ? {
-          onPointerDown: (e) => {
-            e.currentTarget.setPointerCapture?.(e.pointerId)
-            start()
-          },
-          onPointerUp: () => stop(),
-          onPointerCancel: () => stop(true),
-        }
-      : { onClick: toggle }
+  // Lip reading only runs while the button is held down.
+  const holdProps = {
+    onPointerDown: (e) => {
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+      start()
+    },
+    onPointerUp: () => stop(),
+    onPointerCancel: () => stop(true),
+    onKeyDown: (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) {
+        e.preventDefault()
+        e.stopPropagation()
+        start()
+      }
+    },
+    onKeyUp: (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        e.stopPropagation()
+        stop()
+      }
+    },
+  }
 
   const guideStyle =
     full && mouth
@@ -112,23 +116,12 @@ export default function CameraPanel({
         {status}
       </p>
 
-      <fieldset className="choice">
-        <legend>Start reading</legend>
-        <div className="seg">
-          {MODES.map(([id, label]) => (
-            <button key={id} aria-pressed={mode === id} onClick={() => onModeChange(id)}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-
       <div className="camera-actions">
         <button className={`btn btn-dark ${recording ? 'is-live' : ''}`} disabled={disabled && !recording} {...holdProps}>
-          {recording ? (mode === 'hold' ? 'Release when done' : 'Done') : mode === 'hold' ? 'Hold to read' : 'Start'}
+          {recording ? 'Reading… let go when done' : 'Hold to read my lips'}
         </button>
       </div>
-      <p className="fine">Space bar works too.</p>
+      <p className="fine">Or hold the Space bar.</p>
     </section>
   )
 }

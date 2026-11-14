@@ -191,6 +191,53 @@ def _context_boost(candidate: str, partner_text: str) -> float:
     return min(0.3, boost)
 
 
+def name_variants(candidates: list[dict], names: Iterable[str], max_new: int = 4) -> list[dict]:
+    """Make the user's saved names show up in lip-reading guesses.
+
+    Names are hard to lip-read: "call Akash" often comes back as "call a cash". For every
+    guess, any run of 1-3 words that looks like a saved name on the lips becomes an extra
+    guess with the name swapped in. Exact matches just get the name's capitals.
+    Short names need a closer match, so "ham" doesn't turn into "Sam".
+    """
+    names = [n.strip() for n in names if n and n.strip()]
+    if not names or not candidates:
+        return candidates
+    out = [dict(c) for c in candidates]
+    extra: dict[str, dict] = {}
+    for c in out[:5]:
+        words = c["text"].split()
+        prob = float(c.get("prob", 0.0))
+        for name in names:
+            key = normalize_text(name).replace(" ", "")
+            if len(key) < 2:
+                continue
+            need = 0.7 if len(key) >= 5 else 0.8 if len(key) == 4 else 0.9
+            best = None
+            for i in range(len(words)):
+                for j in range(i + 1, min(len(words), i + 3) + 1):
+                    span = "".join(normalize_text(w) for w in words[i:j])
+                    if not span or abs(len(span) - len(key)) > max(2, len(key) // 2):
+                        continue
+                    sim = viseme_similarity(span, key)
+                    if sim >= need and (best is None or sim > best[0]):
+                        best = (sim, i, j)
+            if best is None:
+                continue
+            sim, i, j = best
+            new_text = " ".join(words[:i] + [name] + words[j:])
+            if sim >= 0.99 and j - i == 1:
+                words = words[:i] + [name] + words[j:]  # same word: just use the right capitals
+                c["text"] = new_text
+                continue
+            k = normalize_text(new_text)
+            score = prob * (0.5 + 0.6 * sim)
+            if k not in extra or extra[k]["prob"] < score:
+                extra[k] = {"text": new_text, "prob": round(score, 4), "name_match": name}
+    known = {normalize_text(c["text"]) for c in out}
+    new = sorted((v for k, v in extra.items() if k not in known), key=lambda v: -v["prob"])[:max_new]
+    return sorted(out + new, key=lambda c: -float(c.get("prob", 0.0)))
+
+
 def rank_locally(
     vsr_candidates: list[dict],
     phrase_bank: Iterable[str],
@@ -282,7 +329,7 @@ def rank_locally(
 def pretty(text: str) -> str:
     """Sentence-case raw lip-reading output ("i want coffee" -> "I want coffee")."""
     t = (text or "").strip()
-    if not t or any(ch.isupper() for ch in t):
+    if not t:
         return t
     t = re.sub(r"\bi\b", "I", t)
     t = re.sub(r"\bi'(m|ll|ve|d)\b", lambda m: "I'" + m.group(1), t)

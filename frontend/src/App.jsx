@@ -230,10 +230,9 @@ export default function App() {
   // ---------------------------------------------------------------- capture
   const { videoRef, stream, error: cameraError } = useCamera()
   const awaitingConfirm = Boolean(current?.needsConfirm && !current?.done)
-  const mode = prefs?.capture_mode === 'hold' ? 'hold' : 'tap'
   const modalOpen = Boolean(modal)
   const captureEnabled = modelState === 'ready' && !reading && !modalOpen
-  const following = prefs ? prefs.follow_lips !== false : false
+  const following = prefs ? prefs.follow_lips !== false : false // on unless turned off
   const tracker = useMouthTracker({ videoRef, stream, enabled: following && !reading && !modalOpen })
 
   const capture = useCapture({
@@ -252,11 +251,10 @@ export default function App() {
     const down = (e) => {
       if (e.code !== 'Space' || e.repeat || modalOpen || typing()) return
       e.preventDefault()
-      if (mode === 'hold') captureRef.current.start()
-      else captureRef.current.toggle()
+      captureRef.current.start()
     }
     const up = (e) => {
-      if (e.code !== 'Space' || modalOpen || typing() || mode !== 'hold') return
+      if (e.code !== 'Space' || modalOpen || typing()) return
       e.preventDefault()
       captureRef.current.stop()
     }
@@ -266,7 +264,7 @@ export default function App() {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
     }
-  }, [mode, modalOpen])
+  }, [modalOpen])
 
   const lastSaid = current?.text || [...entries].reverse().find((e) => e.speaker === 'user')?.text || ''
 
@@ -307,8 +305,6 @@ export default function App() {
           videoRef={videoRef}
           cameraError={cameraError}
           capture={capture}
-          mode={mode}
-          onModeChange={(m) => savePrefs({ capture_mode: m })}
           busy={reading ? 'reading' : awaitingConfirm ? 'confirm' : null}
           modelState={modelState}
           unmirror={prefs.unmirror}

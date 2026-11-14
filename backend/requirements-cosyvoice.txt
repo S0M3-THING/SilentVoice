@@ -1,0 +1,16 @@
+# CosyVoice 2 (own-voice model), installed by setup.sh into backend/.venv-cosyvoice on Apple Silicon.
+# mlx-audio-plus provides the CosyVoice port but ships a module with the same name as mlx-audio,
+# so it gets its own environment and is installed with --no-deps (see setup.sh). These are the
+# packages its CosyVoice code actually imports.
+mlx>=0.25.2
+numpy>=1.26.4,<2.3
+huggingface_hub>=0.27.0
+transformers>=4.49.0,<5.0.0
+mlx-lm>=0.18.0,<0.30.0
+tqdm>=4.67.1
+soundfile>=0.13.1
+librosa==0.11.0
+scipy
+safetensors
+einops>=0.8.1
+torch

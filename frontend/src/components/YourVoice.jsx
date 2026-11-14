@@ -72,7 +72,7 @@ function SetupVoice({ status, onDone }) {
   return (
     <div className="stack">
       <p className="muted small">
-        SilentVoice makes a copy of your voice on this computer with an open model (Qwen3-TTS). It needs a few seconds
+        SilentVoice makes a copy of your voice on this computer with an open model (Qwen3-TTS or CosyVoice). It needs a few seconds
         of you speaking clearly. Nothing is uploaded.
       </p>
       <div className="seg" role="tablist" aria-label="How to add your voice">
@@ -204,6 +204,11 @@ function ReadyVoice({ status, prefs, setPref, onChanged }) {
   )
 }
 
+const MODEL_NOTES = {
+  qwen3: 'Qwen3-TTS: quick, and good with a short sample. Both models run on this Mac and use the same recording.',
+  cosyvoice: 'CosyVoice 2: often sounds more natural, a little slower. Both models run on this Mac and use the same recording.',
+}
+
 /** Settings section: make, check and manage the user's own voice. */
 export default function YourVoice({ prefs, setPref, voiceStatus, onVoiceChanged }) {
   const [status, setStatus] = useState(voiceStatus)
@@ -227,9 +232,32 @@ export default function YourVoice({ prefs, setPref, voiceStatus, onVoiceChanged 
 
   if (!status) return <p className="muted small">Checking…</p>
 
+  const switchModel = (key) => {
+    setPref('voice_model', key)
+    setTimeout(() => api.voice().then(update).catch(() => {}), 600)
+  }
+  const engines = status.engines || []
+  const cosy = engines.find((e) => e.key === 'cosyvoice')
+
   return (
     <section className="sub">
       <h3>Your own voice</h3>
+      {engines.length > 1 && (
+        <fieldset className="choice">
+          <legend>Voice model</legend>
+          <div className="seg">
+            {engines.map((e) => (
+              <button key={e.key} type="button" aria-pressed={status.engine_key === e.key} disabled={!e.available} onClick={() => switchModel(e.key)}>
+                {e.name}
+              </button>
+            ))}
+          </div>
+          <span className="muted small">
+            {MODEL_NOTES[status.engine_key] || ''}
+            {cosy && !cosy.available ? ` ${cosy.reason}` : ''}
+          </span>
+        </fieldset>
+      )}
       {!status.available ? (
         <p className="muted small">{status.unavailable_reason} The device voice is used instead.</p>
       ) : status.has_voice ? (

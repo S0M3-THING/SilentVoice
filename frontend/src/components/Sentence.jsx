@@ -73,14 +73,12 @@ export default function Sentence({ current, reading, error, dest, onDeliver, onP
           ))}
           <div className="fallback-links">
             <button className="link" onClick={() => onFallback('spell')}>None of these: spell it</button>
-            <button className="link" onClick={() => onFallback('phrases')}>Pick a phrase</button>
             <button className="link" onClick={() => onFallback('yesno')}>Answer yes or no</button>
           </div>
         </div>
       ) : (
         <div className="fallback-links">
           <button className="link" onClick={() => onFallback('spell')}>Spell something else</button>
-          <button className="link" onClick={() => onFallback('phrases')}>Pick a phrase</button>
           <button className="link" onClick={() => onFallback('yesno')}>Answer yes or no</button>
         </div>
       )}

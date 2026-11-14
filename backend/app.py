@@ -114,11 +114,12 @@ def create_app(
     vsr_service: Any = None,
     autoload: bool = True,
     voice_engine: Any = None,
+    voice_engines: dict | None = None,
     word_checker: Any = None,
     mouth_locator: Any = None,
 ) -> FastAPI:
     store = store or Store()
-    voice = VoiceService(store, engine=voice_engine)
+    voice = VoiceService(store, engine=voice_engine, engines=voice_engines)
     checker = word_checker if word_checker is not None else MLXWordChecker()
     mouth = mouth_locator if mouth_locator is not None else MouthLocator()
     model = ModelHolder()
@@ -170,7 +171,10 @@ def create_app(
 
     @app.put("/api/profile")
     def put_profile(patch: ProfilePatch):
-        return store.update_profile(patch.model_dump(exclude_none=True))
+        prof = store.update_profile(patch.model_dump(exclude_none=True))
+        if patch.preferences and "voice_model" in patch.preferences:
+            voice.select(prof["preferences"].get("voice_model", "qwen3"))
+        return prof
 
     @app.post("/api/profile/setup")
     def setup_profile(body: SetupIn):

@@ -1,12 +1,21 @@
 // Thin wrappers around the SilentVoice backend (proxied at /api by Vite).
 
+const OFFLINE = 'Can’t reach the SilentVoice server, so this wasn’t saved. Check that ./start.sh is still running in Terminal, then try again.'
+
 async function request(path, options = {}) {
-  const res = await fetch(path, options)
+  let res
+  try {
+    res = await fetch(path, options)
+  } catch {
+    throw new Error(OFFLINE) // the browser's "Failed to fetch": the server isn't answering
+  }
   const isJson = res.headers.get('content-type')?.includes('application/json')
-  const body = isJson ? await res.json() : null
+  const body = isJson ? await res.json().catch(() => null) : null
   if (!res.ok) {
     const detail = body?.detail
-    throw new Error(typeof detail === 'string' ? detail : `Request failed (${res.status})`)
+    if (typeof detail === 'string') throw new Error(detail)
+    // No JSON from a 5xx means the dev server couldn't reach the backend at all.
+    throw new Error(res.status >= 500 ? OFFLINE : `Request failed (${res.status})`)
   }
   return body
 }

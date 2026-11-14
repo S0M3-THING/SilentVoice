@@ -81,26 +81,21 @@ function ReadingTab({ prefs, setPref, health }) {
   const wc = health?.word_check
   return (
     <div className="stack">
-      <Choice
-        label="Start reading"
-        value={prefs.capture_mode}
-        onChange={(v) => setPref('capture_mode', v)}
-        options={[
-          ['tap', 'Tap to start and stop'],
-          ['hold', 'Press and hold'],
-        ]}
-      />
+      <p className="muted">
+        SilentVoice reads your lips only while you hold the button or the Space bar, so it never picks up
+        movement you didn’t mean.
+      </p>
       <Toggle
         label="Check guesses with a text model"
         hint="A small text model on this computer picks the guess that makes the most sense, using what the other person just said. For example “coffee” instead of “toffee” after “Would you like a drink?”. If it changes the lips’ first guess, SilentVoice always asks you first."
-        checked={prefs.word_check}
+        checked={prefs.word_check !== false}
         onChange={(v) => setPref('word_check', v)}
       />
-      {prefs.word_check && wordCheckNote(wc) && <p className="muted small">{wordCheckNote(wc)}</p>}
+      {prefs.word_check !== false && wordCheckNote(wc) && <p className="muted small">{wordCheckNote(wc)}</p>}
       <Toggle
         label="Keep my mouth in the middle"
         hint="The lip window follows your mouth, so you can shift around in bed or in your chair."
-        checked={prefs.follow_lips}
+        checked={prefs.follow_lips !== false}
         onChange={(v) => setPref('follow_lips', v)}
       />
       <Choice
