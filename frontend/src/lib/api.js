@@ -40,7 +40,7 @@ export const api = {
     form.append('source', source)
     return request('/api/voice/reference', { method: 'POST', body: form })
   },
-  lipread: ({ blob, mimeType, prefs, partnerText, history }) => {
+  lipread: ({ blob, mimeType, prefs, partnerText, history, patientAudioText, voiceAssist }) => {
     const form = new FormData()
     form.append('video', blob, `clip${mimeType.includes('mp4') ? '.mp4' : '.webm'}`)
     form.append('mode', prefs.recognition_mode || 'fast')
@@ -49,6 +49,11 @@ export const api = {
     form.append('enhance', String(prefs.low_light_boost !== false))
     form.append('partner_text', partnerText || '')
     form.append('history_json', JSON.stringify(history || []))
+    form.append('user_context', prefs?.user_context || '')
+    form.append('patient_audio_text', patientAudioText || '')
+    form.append('voice_assist', String(Boolean(voiceAssist ?? prefs?.voice_assist)))
     return request('/api/lipread', { method: 'POST', body: form })
   },
+  audioDevices: () => request('/api/audio/devices'),
+  audioPlay: ({ text, device }) => request('/api/audio/play', json('POST', { text, device })),
 }

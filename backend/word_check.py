@@ -31,9 +31,13 @@ PREAMBLE = (
 )
 
 
-def build_context(partner_text: str = "", history: list[dict] | None = None) -> str:
+def build_context(partner_text: str = "", history: list[dict] | None = None, user_context: str = "") -> str:
     """The conversation so far, ending where the user's sentence starts."""
-    lines = [PREAMBLE]
+    preamble = PREAMBLE
+    user_context = (user_context or "").strip()
+    if user_context:
+        preamble = f"{PREAMBLE}Setting and context: {user_context}.\n"
+    lines = [preamble]
     for h in (history or [])[-4:]:
         text = str(h.get("text", "")).strip()
         if text:
@@ -144,7 +148,13 @@ def _shared_prefix(a: list[int], b: list[int]) -> int:
     return n
 
 
-def check_guesses(checker, candidates: list[dict], partner_text: str = "", history: list[dict] | None = None) -> dict | None:
+def check_guesses(
+    checker,
+    candidates: list[dict],
+    partner_text: str = "",
+    history: list[dict] | None = None,
+    user_context: str = "",
+) -> dict | None:
     """Rescore lip-reading guesses with the text model. None when the checker isn't ready."""
     if checker is None or not getattr(checker, "ready", False) or len(candidates) < 2:
         return None
@@ -153,7 +163,7 @@ def check_guesses(checker, candidates: list[dict], partner_text: str = "", histo
     if len(cands) < 2:
         return None
     try:
-        scores = checker.score(build_context(partner_text, history), [c["text"] for c in cands])
+        scores = checker.score(build_context(partner_text, history, user_context), [c["text"] for c in cands])
     except Exception:
         return None
     ranked = blend(cands, scores)

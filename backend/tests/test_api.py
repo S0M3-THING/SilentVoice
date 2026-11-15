@@ -135,3 +135,26 @@ def test_setup_quiet_and_care_defaults(make_client):
     assert care["preferences"]["destination"] == "loud"
     assert any(b["id"] == "nurse" for b in care["quick_buttons"])
     assert client.post("/api/profile/setup", json={"use": "other"}).status_code == 422
+
+
+def test_audio_devices_endpoint(make_client):
+    client, _ = make_client()
+    resp = client.get("/api/audio/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "devices" in data
+    assert "blackhole_detected" in data
+
+
+def test_audio_play_endpoint_mock(make_client, monkeypatch):
+    from tests.test_audio_device import _make_dummy_wav
+    client, _ = make_client()
+    dummy_wav = _make_dummy_wav(duration_s=0.05, sample_rate=8000)
+    # Mock system_voice.speak_to_wav and play_wav_to_device
+    monkeypatch.setattr("system_voice.available", lambda: True)
+    monkeypatch.setattr("system_voice.speak_to_wav", lambda text, voice, rate: dummy_wav)
+    monkeypatch.setattr("app.play_wav_to_device", lambda wav, dev: True)
+
+    resp = client.post("/api/audio/play", json={"text": "testing audio", "device": "blackhole"})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True

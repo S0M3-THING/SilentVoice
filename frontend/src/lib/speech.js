@@ -49,7 +49,15 @@ async function playOn(res, speakerId) {
   currentAudio = audio
   if (speakerId && typeof audio.setSinkId === 'function') {
     try {
-      await audio.setSinkId(speakerId)
+      if (speakerId === 'blackhole-loopback') {
+        const devs = await navigator.mediaDevices?.enumerateDevices?.()
+        const bh = devs?.find((d) => d.kind === 'audiooutput' && /blackhole/i.test(d.label))
+        if (bh?.deviceId) {
+          await audio.setSinkId(bh.deviceId)
+        }
+      } else {
+        await audio.setSinkId(speakerId)
+      }
     } catch {
       // The speaker went away (Bluetooth disconnected): play on the default one instead.
     }

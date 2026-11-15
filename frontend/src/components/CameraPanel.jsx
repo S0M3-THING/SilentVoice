@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { slotVideoStyle } from '../lib/useMouthTracker.js'
 
 const MODES = [
-  ['tap', 'Tap to start and stop'],
-  ['hold', 'Press and hold'],
+  ['tap', 'Tap mode'],
+  ['hold', 'Hold mode'],
 ]
 
 function lightingHint(brightness) {
@@ -40,11 +40,16 @@ export default function CameraPanel({
   unmirror,
   mouth,
   following,
+  voiceAssist,
+  onToggleVoiceAssist,
+  isLiveMicActive,
+  onToggleLiveMic,
+  isBlackHole,
 }) {
   const [full, setFull] = useState(false)
   const slotRef = useRef(null)
   const slotSize = useSize(slotRef)
-  const { recording, seconds, level, brightness, start, stop, toggle } = capture
+  const { recording, seconds, level, brightness, start, stop, toggle, micLiveText } = capture
   const hint = lightingHint(brightness)
   const video = videoRef.current
   const aspect = video?.videoWidth ? video.videoWidth / video.videoHeight : 4 / 3
@@ -57,11 +62,20 @@ export default function CameraPanel({
       modelState === 'error'
         ? 'Lip reading is unavailable right now. Shortcuts, phrases and spelling still work.'
         : 'Lip reading is starting. Shortcuts, phrases and spelling already work.'
-  else if (busy === 'reading') status = 'Reading your lips…'
+  else if (isLiveMicActive) status = 'Streaming continuously to Zoom & Google Meet via BlackHole…'
+  else if (busy === 'reading') status = 'Reading your lips and audio…'
   else if (busy === 'confirm') status = 'Check the sentence before it goes anywhere.'
-  else if (recording) status = `Watching your lips: ${seconds.toFixed(1)} s`
-  else if (mode === 'tap') status = 'Press Start, mouth your sentence, then press Done.'
-  else status = 'Hold the button while you mouth your sentence.'
+  else if (recording) {
+    status = micLiveText
+      ? `🎙️ Hearing: “${micLiveText}” (${seconds.toFixed(1)} s)`
+      : `Watching lips & mic: ${seconds.toFixed(1)} s (press Stop when done)`
+  }
+  else if (mode === 'tap') status = 'Press Start, mouth or speak your sentence, then press Stop.'
+  else status = 'Hold the button while you mouth or speak your sentence.'
+
+  if (voiceAssist && !cameraError && modelState === 'ready' && !isLiveMicActive && !recording) {
+    status += ' • Voice Assist listening for faint speech'
+  }
 
   const disabled = Boolean(cameraError) || modelState !== 'ready' || busy === 'reading'
   const holdProps =
@@ -112,22 +126,104 @@ export default function CameraPanel({
         {status}
       </p>
 
-      <fieldset className="choice">
-        <legend>Start reading</legend>
-        <div className="seg">
+      <fieldset className="choice choice-reading-mode">
+        <legend className="reading-mode-legend">Reading mode</legend>
+        <div className="seg seg-reading-mode" role="radiogroup" aria-label="Reading mode">
           {MODES.map(([id, label]) => (
-            <button key={id} aria-pressed={mode === id} onClick={() => onModeChange(id)}>
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={mode === id}
+              aria-pressed={mode === id}
+              className={`seg-btn ${mode === id ? 'is-active' : ''}`}
+              onClick={() => onModeChange(id)}
+            >
               {label}
             </button>
           ))}
         </div>
       </fieldset>
 
-      <div className="camera-actions">
-        <button className={`btn btn-dark ${recording ? 'is-live' : ''}`} disabled={disabled && !recording} {...holdProps}>
-          {recording ? (mode === 'hold' ? 'Release when done' : 'Done') : mode === 'hold' ? 'Hold to read' : 'Start'}
+      {mode === 'tap' ? (
+        <div className="camera-actions tap-controls">
+          <button
+            className={`btn btn-start ${recording ? 'is-recording' : ''}`}
+            disabled={disabled || recording}
+            onClick={() => start()}
+            type="button"
+            aria-label="Start recording lips and voice"
+          >
+            <span className="dot-indicator on" aria-hidden="true" />
+            <span>Start</span>
+          </button>
+          <button
+            className={`btn btn-stop ${recording ? 'is-live' : ''}`}
+            disabled={disabled || !recording}
+            onClick={() => stop(false)}
+            type="button"
+            aria-label="Stop recording and recognize speech"
+          >
+            <span className="square-indicator" aria-hidden="true" />
+            <span>{recording ? `Stop (${seconds.toFixed(1)}s)` : 'Stop'}</span>
+          </button>
+          {recording && (
+            <button
+              className="btn btn-cancel-recording"
+              onClick={() => stop(true)}
+              type="button"
+              title="Discard this clip without recognizing"
+              aria-label="Discard recording"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="camera-actions hold-controls">
+          <button
+            className={`btn btn-hold ${recording ? 'is-live' : ''}`}
+            disabled={disabled && !recording}
+            {...holdProps}
+            type="button"
+          >
+            <span className={recording ? 'square-indicator' : 'dot-indicator on'} aria-hidden="true" />
+            <span>{recording ? `Release when done (${seconds.toFixed(1)}s)` : 'Hold while speaking'}</span>
+          </button>
+        </div>
+      )}
+
+      {recording && micLiveText && (
+        <div className="mic-live-preview" role="status" aria-live="polite">
+          <span className="live-mic-dot" aria-hidden="true" />
+          <span className="live-mic-label">Heard:</span>
+          <span className="live-mic-text">“{micLiveText}”</span>
+        </div>
+      )}
+
+      <div className="camera-options-card">
+        <div className="camera-options-info">
+          <span className="options-icon" aria-hidden="true">{voiceAssist ? '🎙️' : '🔇'}</span>
+          <div className="options-copy">
+            <span className="options-title">Microphone Audio Assist</span>
+            <span className="options-sub">
+              {voiceAssist ? 'Utmost priority for voice, verified with lips' : 'Mouth lip-reading only (microphone ignored)'}
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={voiceAssist}
+          className={`switch-toggle ${voiceAssist ? 'is-on' : 'is-off'}`}
+          onClick={onToggleVoiceAssist}
+          aria-label="Toggle Microphone Audio Assist"
+          title="Captures microphone audio and gives it utmost priority, using lip reading as a visual verifier."
+        >
+          <span className="switch-thumb" aria-hidden="true" />
         </button>
       </div>
+
       <p className="fine">Space bar works too.</p>
     </section>
   )

@@ -33,6 +33,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "recognition_mode": "fast",    # fast | accurate
     "phrases_only": False,         # closed-set mode: only ever output saved phrases
     "confirm_policy": "unsure",    # always | unsure | never
+    "user_context": "",            # setting/environment context to guide LLM (e.g. "in hospital", "at a park")
     "low_light_boost": True,
     "unmirror": False,
     "voice_name": "",
@@ -43,6 +44,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "high_contrast": False,
     "alert_sound": True,
     "partner_mic": False,
+    "voice_assist": True,
 }
 
 
@@ -92,6 +94,15 @@ class Store:
             defaults = _default_profile()
             for k, v in defaults.items():
                 prof.setdefault(k, v)
+            existing_phrase_texts = {p.get("text", "").lower() for p in prof.get("phrases", [])}
+            added_phrases = False
+            for dp in DEFAULT_PHRASES:
+                if dp["text"].lower() not in existing_phrase_texts:
+                    prof.setdefault("phrases", []).append(dict(dp, uses=0))
+                    existing_phrase_texts.add(dp["text"].lower())
+                    added_phrases = True
+            if added_phrases:
+                self._write_json(self.profile_path, prof)
             prefs = {**DEFAULT_PREFERENCES, **(prof.get("preferences") or {})}
             # Options removed in later versions fall back to their replacements.
             if prefs.get("capture_mode") not in ("tap", "hold"):

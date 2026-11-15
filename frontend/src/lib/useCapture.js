@@ -12,8 +12,8 @@ function pickMimeType() {
   return options.find((m) => MediaRecorder.isTypeSupported(m)) || ''
 }
 
-/** Silent webcam (no microphone is ever requested for the camera). */
-export function useCamera() {
+/** Webcam with optional patient microphone assist for multimodal lip sync. */
+export function useCamera({ voiceAssist = true } = {}) {
   const videoRef = useRef(null)
   const [stream, setStream] = useState(null)
   const [error, setError] = useState('')
@@ -24,7 +24,7 @@ export function useCamera() {
     navigator.mediaDevices
       ?.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
-        audio: false,
+        audio: voiceAssist ? { echoCancellation: true, noiseSuppression: false, autoGainControl: true } : false,
       })
       .then((s) => {
         if (cancelled) return s.getTracks().forEach((t) => t.stop())
@@ -35,7 +35,7 @@ export function useCamera() {
       .catch((err) => {
         setError(
           err?.name === 'NotAllowedError'
-            ? 'Camera access is blocked. Allow the camera in your browser’s address bar, then reload.'
+            ? 'Camera/microphone access is blocked. Allow access in your browser’s address bar, then reload.'
             : 'No camera found. Connect a camera or use the phrase board below.',
         )
       })
@@ -44,7 +44,7 @@ export function useCamera() {
       cancelled = true
       active?.getTracks().forEach((t) => t.stop())
     }
-  }, [])
+  }, [voiceAssist])
 
   useEffect(() => {
     if (videoRef.current && stream && videoRef.current.srcObject !== stream) {
@@ -60,14 +60,18 @@ export function useCamera() {
  * mode "tap":  tap (or Space) once to start, again to stop. Good for weak hands or a helper.
  * mode "hold": press and hold.
  * `mouthRef` (from useMouthTracker) points the movement meter at the mouth wherever it is.
+ * `voiceAssist`: captures faint patient vocal audio to fuse with visual lip reading.
  */
-export function useCapture({ videoRef, stream, enabled, onClip, mouthRef }) {
+export function useCapture({ videoRef, stream, enabled, onClip, mouthRef, voiceAssist = true }) {
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [level, setLevel] = useState(0)
   const [brightness, setBrightness] = useState(null)
+  const [micLiveText, setMicLiveText] = useState('')
 
   const recorderRef = useRef(null)
+  const speechRecRef = useRef(null)
+  const patientTextRef = useRef('')
   const chunksRef = useRef([])
   const startedAtRef = useRef(0)
   const recordingRef = useRef(false)
@@ -83,13 +87,76 @@ export function useCapture({ videoRef, stream, enabled, onClip, mouthRef }) {
     const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
     chunksRef.current = []
     discardRef.current = false
+    patientTextRef.current = ''
+    setMicLiveText('')
+
+    if (voiceAssist) {
+      const SR = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
+      if (SR) {
+        try {
+          if (speechRecRef.current) {
+            try { speechRecRef.current.abort() } catch {}
+          }
+          const sr = new SR()
+          sr.continuous = true
+          sr.interimResults = true
+          sr.lang = 'en-US'
+          let accumulatedFinal = ''
+          sr.onresult = (e) => {
+            let currentInterim = ''
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+              const res = e.results[i]
+              const transcript = res[0]?.transcript || ''
+              if (res.isFinal) {
+                accumulatedFinal += ' ' + transcript
+              } else {
+                currentInterim += ' ' + transcript
+              }
+            }
+            const fullTranscript = (accumulatedFinal + ' ' + currentInterim).trim()
+            if (fullTranscript) {
+              patientTextRef.current = fullTranscript
+              setMicLiveText(fullTranscript)
+            }
+          }
+          sr.onerror = (e) => {
+            console.warn('Voice assist audio recognition note:', e.error)
+          }
+          sr.start()
+          speechRecRef.current = sr
+        } catch (err) {
+          console.warn('Could not start microphone speech recognition:', err)
+        }
+      }
+    }
+
     rec.ondataavailable = (e) => e.data?.size && chunksRef.current.push(e.data)
-    rec.onstop = () => {
+    rec.onstop = async () => {
       const duration = Date.now() - startedAtRef.current
-      if (discardRef.current || duration < MIN_CLIP_MS) return
+      if (discardRef.current || duration < MIN_CLIP_MS) {
+        if (speechRecRef.current) {
+          try { speechRecRef.current.abort() } catch {}
+          speechRecRef.current = null
+        }
+        setMicLiveText('')
+        return
+      }
+
+      // If speech recognition is active, request it to finish decoding and wait for the final results!
+      if (speechRecRef.current) {
+        try {
+          speechRecRef.current.stop()
+        } catch {}
+        // Give speech recognition 400ms to deliver pending words from the audio buffer
+        await new Promise((r) => setTimeout(r, 400))
+        speechRecRef.current = null
+      }
+
       const type = rec.mimeType || mimeType || 'video/webm'
       const blob = new Blob(chunksRef.current, { type })
-      if (blob.size) onClipRef.current?.(blob, type)
+      const text = (patientTextRef.current || '').trim()
+      setMicLiveText('')
+      if (blob.size) onClipRef.current?.(blob, type, text)
     }
     recorderRef.current = rec
     startedAtRef.current = Date.now()
@@ -97,7 +164,7 @@ export function useCapture({ videoRef, stream, enabled, onClip, mouthRef }) {
     setRecording(true)
     setSeconds(0)
     rec.start(100)
-  }, [stream])
+  }, [stream, voiceAssist])
 
   const stop = useCallback((discard = false) => {
     if (!recordingRef.current) return
@@ -176,5 +243,5 @@ export function useCapture({ videoRef, stream, enabled, onClip, mouthRef }) {
     return () => clearInterval(timer)
   }, [stream, videoRef, stop, mouthRef])
 
-  return { recording, seconds, level, brightness, start, stop, toggle }
+  return { recording, seconds, level, brightness, start, stop, toggle, micLiveText }
 }

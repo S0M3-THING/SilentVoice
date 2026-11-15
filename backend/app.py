@@ -33,6 +33,7 @@ from store import Store
 from voice import VoiceError, VoiceService
 from word_check import MLXWordChecker
 import system_voice
+from audio_device import AudioDeviceError, list_audio_devices, play_wav_to_device
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -80,6 +81,11 @@ class SystemTTSIn(BaseModel):
     text: str = Field(min_length=1, max_length=500)
     voice: str = ""
     rate: float = 1.0
+
+
+class AudioPlayIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    device: str | None = None
 
 
 class ModelHolder:
@@ -208,6 +214,9 @@ def create_app(
         hflip: bool = Form(False),
         enhance: bool = Form(True),
         groq_api_key: str = Form(""),
+        user_context: str = Form(""),
+        patient_audio_text: str = Form(""),
+        voice_assist: bool = Form(False),
     ):
         if model.state != "ready" or model.service is None:
             detail = (
@@ -243,6 +252,7 @@ def create_app(
             del raw  # never keep the video around
 
         profile = store.get_profile()
+        effective_context = (user_context or profile.get("preferences", {}).get("user_context") or "").strip()
         names = profile.get("names") or []
         phrase_bank = [p["text"] for p in profile["phrases"]]
         selection = await select_best_hypothesis(
@@ -256,6 +266,8 @@ def create_app(
             usage=store.usage(),
             names=names,
             checker=checker if profile["preferences"].get("word_check", True) else None,
+            user_context=effective_context,
+            patient_audio_text=patient_audio_text,
         )
 
         selection["text"] = pretty(selection.get("text", ""))
@@ -416,6 +428,43 @@ def create_app(
             raise HTTPException(status_code=503, detail="Lip tracking is unavailable.") from exc
         finally:
             del data
+
+    # ------------------------------------------------------------------ audio routing / virtual microphone
+    @app.get("/api/audio/devices")
+    def audio_devices():
+        return list_audio_devices()
+
+    @app.post("/api/audio/play")
+    async def audio_play(body: AudioPlayIn):
+        profile = store.get_profile()
+        prefs = profile.get("preferences", {})
+        audio_bytes = None
+
+        if prefs.get("use_my_voice") and voice.status().get("has_voice"):
+            try:
+                audio_bytes = await run_in_threadpool(voice.speak, body.text)
+            except Exception:
+                audio_bytes = None
+
+        if audio_bytes is None:
+            if system_voice.available():
+                try:
+                    audio_bytes = await run_in_threadpool(
+                        system_voice.speak_to_wav,
+                        body.text,
+                        prefs.get("voice_name", ""),
+                        float(prefs.get("voice_rate", 1.0)),
+                    )
+                except Exception as exc:
+                    raise HTTPException(status_code=502, detail=f"TTS failed: {exc}") from exc
+            else:
+                raise HTTPException(status_code=501, detail="No system TTS available on this host.")
+
+        try:
+            await run_in_threadpool(play_wav_to_device, audio_bytes, body.device)
+            return {"ok": True, "bytes_played": len(audio_bytes)}
+        except AudioDeviceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return app
 

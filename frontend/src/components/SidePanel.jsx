@@ -1,7 +1,17 @@
 const fmt = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
 /** Where the sentence goes, and what was said earlier. */
-export default function SidePanel({ dests, destKey, onDest, entries, blur, keepHistory, onRepeat }) {
+export default function SidePanel({
+  dests,
+  destKey,
+  onDest,
+  entries,
+  blur,
+  keepHistory,
+  onRepeat,
+  callMuted,
+  onToggleMute,
+}) {
   const recent = entries.slice(-8).reverse()
 
   return (
@@ -9,11 +19,35 @@ export default function SidePanel({ dests, destKey, onDest, entries, blur, keepH
       <fieldset className="dest-list">
         <legend>Goes to</legend>
         {dests.map((d) => (
-          <label key={d.key} className="dest">
+          <label key={d.key} className={`dest ${d.isVirtualMic ? 'dest-virtual-mic' : ''}`}>
             <input type="radio" name="dest" checked={destKey === d.key} onChange={() => onDest(d)} />
-            <span>
-              <span className="dest-label">{d.label}</span>
-              <span className="dest-hint">{d.hint}</span>
+            <span className="dest-content">
+              <span className="dest-label-row">
+                <span className="dest-label">
+                  {d.isVirtualMic ? 'Online Meeting Audio (BlackHole)' : d.label}
+                </span>
+                {d.isVirtualMic && (
+                  <button
+                    type="button"
+                    className={`btn-mute-icon ${callMuted ? 'is-muted' : 'is-live'}`}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onToggleMute?.()
+                    }}
+                    title={callMuted ? 'Call audio is muted. Click to transmit speech to Zoom/Google Meet.' : 'Call audio is transmitting live to Zoom/Google Meet. Click to mute.'}
+                    aria-label={callMuted ? 'Unmute meeting microphone' : 'Mute meeting microphone'}
+                  >
+                    <span className="mute-icon-symbol" aria-hidden="true">{callMuted ? '🔇' : '🎙️'}</span>
+                    <span className="mute-icon-text">{callMuted ? 'Muted' : 'Live'}</span>
+                  </button>
+                )}
+              </span>
+              <span className="dest-hint">
+                {d.isVirtualMic
+                  ? 'Connects to Zoom, Google Meet & Teams as your microphone without background noise.'
+                  : d.hint}
+              </span>
             </span>
           </label>
         ))}

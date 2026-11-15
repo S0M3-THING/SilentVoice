@@ -15,6 +15,7 @@ import PainScale from './components/PainScale.jsx'
 import PartnerView from './components/PartnerView.jsx'
 import Settings from './components/Settings.jsx'
 import Setup from './components/Setup.jsx'
+import { useLiveMic } from './lib/useLiveMic.js'
 
 const URGENT_RE = /can'?t breathe|cannot breathe|suction|nurse|in pain|pain is ([7-9]|10)\b|\bhelp\b|choking|bleeding|emergency/i
 
@@ -36,6 +37,7 @@ export default function App() {
   const [modal, setModal] = useState(null)
   const [toast, setToast] = useState('')
   const [setupBusy, setSetupBusy] = useState(false)
+  const [callMuted, setCallMuted] = useState(false)
   const lastActivity = useRef(Date.now())
 
   const prefs = profile?.preferences
@@ -166,6 +168,10 @@ export default function App() {
       addEntry({ speaker: 'user', text, source, confidence: extra.confidence ?? null, raw: extra.raw ?? null })
 
       if (target === 'loud') {
+        if (callMuted && dest.isVirtualMic) {
+          // Virtual mic is muted: skip audio output to BlackHole/Call
+          return
+        }
         if (urgent && prefs?.alert_sound) {
           playAlert(speakerId)
           await new Promise((r) => setTimeout(r, 750))
@@ -175,17 +181,25 @@ export default function App() {
         setModal({ type: 'show', text })
       }
     },
-    [addEntry, destId, prefs, voiceStatus, speakerId],
+    [addEntry, destId, prefs, voiceStatus, speakerId, callMuted, dest],
   )
 
   const handleClip = useCallback(
-    async (blob, mimeType) => {
+    async (blob, mimeType, patientAudioText = '') => {
       touch()
       setReading(true)
       setReadError('')
       try {
         const history = entries.slice(-6).map((e) => ({ speaker: e.speaker === 'user' ? 'me' : 'them', text: e.text }))
-        const data = await api.lipread({ blob, mimeType, prefs, partnerText, history })
+        const data = await api.lipread({
+          blob,
+          mimeType,
+          prefs,
+          partnerText,
+          history,
+          patientAudioText,
+          voiceAssist: voiceAssistActive,
+        })
         const r = data.result
         if (!r.text) throw new Error('No words came through. Try again a little slower, or spell it.')
         const next = {
@@ -228,13 +242,36 @@ export default function App() {
   )
 
   // ---------------------------------------------------------------- capture
-  const { videoRef, stream, error: cameraError } = useCamera()
+  const voiceAssistActive = prefs?.voice_assist !== false
+  const { videoRef, stream, error: cameraError } = useCamera({ voiceAssist: voiceAssistActive })
   const awaitingConfirm = Boolean(current?.needsConfirm && !current?.done)
   const mode = prefs?.capture_mode === 'hold' ? 'hold' : 'tap'
   const modalOpen = Boolean(modal)
-  const captureEnabled = modelState === 'ready' && !reading && !modalOpen
   const following = prefs ? prefs.follow_lips !== false : false
   const tracker = useMouthTracker({ videoRef, stream, enabled: following && !reading && !modalOpen })
+
+  const isBlackHole = speakers.some((s) => s.isVirtualMic || /blackhole/i.test(s.label))
+
+  const live = useLiveMic({
+    stream,
+    videoRef,
+    enabled: modelState === 'ready',
+    modelReady: modelState === 'ready',
+    prefs,
+    partnerText,
+    speakers,
+    voiceStatus,
+    onDelivered: (text, entry) => {
+      addEntry({
+        speaker: 'user',
+        text,
+        source: 'live_call',
+        confidence: entry.confidence,
+      })
+    },
+  })
+
+  const captureEnabled = modelState === 'ready' && !reading && !modalOpen && !live.active
 
   const capture = useCapture({
     videoRef,
@@ -242,6 +279,7 @@ export default function App() {
     enabled: captureEnabled,
     onClip: handleClip,
     mouthRef: tracker.mouthRef,
+    voiceAssist: voiceAssistActive,
   })
   const mic = usePartnerMic({ enabled: Boolean(prefs?.partner_mic), onFinal: onPartner })
 
@@ -250,13 +288,13 @@ export default function App() {
   useEffect(() => {
     const typing = () => ['input', 'textarea', 'select', 'button'].includes(document.activeElement?.tagName?.toLowerCase())
     const down = (e) => {
-      if (e.code !== 'Space' || e.repeat || modalOpen || typing()) return
+      if (e.code !== 'Space' || e.repeat || modalOpen || typing() || live.active) return
       e.preventDefault()
       if (mode === 'hold') captureRef.current.start()
       else captureRef.current.toggle()
     }
     const up = (e) => {
-      if (e.code !== 'Space' || modalOpen || typing() || mode !== 'hold') return
+      if (e.code !== 'Space' || modalOpen || typing() || mode !== 'hold' || live.active) return
       e.preventDefault()
       captureRef.current.stop()
     }
@@ -288,8 +326,40 @@ export default function App() {
     <div className="app">
       <header className="top">
         <p className="wordmark">SilentVoice</p>
+
+        <div className="top-mic-badge">
+          {isBlackHole ? (
+            <div className="top-meeting-mic-group">
+              <span className="badge badge-success" title="BlackHole virtual audio driver is ready for Zoom and Google Meet">
+                <span className="dot on" /> Online Meeting Mic (BlackHole)
+              </span>
+              <button
+                type="button"
+                className={`top-call-mute-btn ${callMuted ? 'is-muted' : 'is-live'}`}
+                onClick={() => setCallMuted((m) => !m)}
+                title={callMuted ? 'Call audio is muted. Click to transmit speech to Zoom/Google Meet.' : 'Call audio is transmitting live to Zoom/Google Meet. Click to mute.'}
+                aria-label={callMuted ? 'Unmute meeting microphone' : 'Mute meeting microphone'}
+              >
+                <span className="mute-icon-symbol" aria-hidden="true">{callMuted ? '🔇' : '🎙️'}</span>
+                <span className="mute-icon-text">{callMuted ? 'Muted' : 'Live'}</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="badge badge-warning text-btn-link"
+              onClick={() => setModal({ type: 'settings', tab: 'Virtual Mic / Zoom' })}
+              title="BlackHole driver setup"
+            >
+              <span className="dot warn" /> Virtual Mic: Setup Guide
+            </button>
+          )}
+        </div>
+
         <p className="top-note">
-          {modelState === 'ready' ? 'Your camera is read on this computer. Video is never saved.' : 'Lip reading is starting…'}
+          {modelState === 'ready'
+            ? 'Your camera is read on this computer. Video is never saved.'
+            : 'Lip reading is starting…'}
         </p>
         <div className="top-actions">
           <button className="btn" onClick={() => setModal({ type: 'settings' })}>Settings</button>
@@ -314,40 +384,48 @@ export default function App() {
           unmirror={prefs.unmirror}
           mouth={tracker.mouth}
           following={following && !tracker.unavailable}
+          voiceAssist={voiceAssistActive}
+          onToggleVoiceAssist={() => savePrefs({ voice_assist: !voiceAssistActive })}
+          isLiveMicActive={live.active}
+          onToggleLiveMic={() => (live.active ? live.stopLive() : live.startLive())}
+          isBlackHole={isBlackHole}
         />
 
         <div className="center">
-        <PartnerPanel
-          partner={{ text: partnerText, interim: mic.interim, micOn: Boolean(prefs.partner_mic), listening: mic.listening, error: mic.error }}
-          onPartnerTyped={onPartner}
-          onToggleMic={() => savePrefs({ partner_mic: !prefs.partner_mic })}
-        />
+            <PartnerPanel
+              partner={{ text: partnerText, interim: mic.interim, micOn: Boolean(prefs.partner_mic), listening: mic.listening, error: mic.error }}
+              onPartnerTyped={onPartner}
+              onToggleMic={() => savePrefs({ partner_mic: !prefs.partner_mic })}
+            />
 
-        <Sentence
-          current={current}
-          reading={reading}
-          error={readError}
-          dest={dest}
-          onDeliver={(t) => deliver(t, current?.source || 'lipread', { confidence: current?.confidence, raw: current?.raw, label: current?.label })}
-          onPickAlt={(a) => deliver(a, 'lipread', { confidence: null, raw: current?.raw, label: null, repaired: false })}
-          onFallback={(tab) => setModal({ type: 'board', tab })}
-        />
-        </div>
+            <Sentence
+              current={current}
+              reading={reading}
+              error={readError}
+              dest={dest}
+              onDeliver={(t) => deliver(t, current?.source || 'lipread', { confidence: current?.confidence, raw: current?.raw, label: current?.label })}
+              onPickAlt={(a) => deliver(a, 'lipread', { confidence: null, raw: current?.raw, label: null, repaired: false })}
+              onFallback={(tab, initialText) => setModal({ type: 'board', tab, initialText })}
+            />
+            </div>
 
-        <SidePanel
-          dests={dests}
-          destKey={dest.key}
-          onDest={(d) => savePrefs(d.id === 'loud' ? { destination: 'loud', speaker_id: d.speakerId } : { destination: 'show' })}
-          entries={entries}
-          blur={prefs.privacy_blur}
-          keepHistory={prefs.keep_history}
-          onRepeat={(t) => deliver(t, 'repeat')}
-        />
-      </main>
+            <SidePanel
+              dests={dests}
+              destKey={dest.key}
+              onDest={(d) => savePrefs(d.id === 'loud' ? { destination: 'loud', speaker_id: d.speakerId } : { destination: 'show' })}
+              entries={entries}
+              blur={prefs.privacy_blur}
+              keepHistory={prefs.keep_history}
+              onRepeat={(t) => deliver(t, 'repeat')}
+              callMuted={callMuted}
+              onToggleMute={() => setCallMuted((m) => !m)}
+            />
+          </main>
 
       {modal?.type === 'board' && (
         <Board
           initialTab={modal.tab}
+          initialText={modal.initialText || ''}
           phrases={profile.phrases}
           names={profile.names || []}
           onClose={() => setModal(null)}
@@ -387,6 +465,7 @@ export default function App() {
           onVoiceChanged={setVoiceStatus}
           health={health}
           speakerId={speakerId}
+          speakers={speakers}
           onClearLog={async () => {
             await api.clearLog()
             setEntries([])

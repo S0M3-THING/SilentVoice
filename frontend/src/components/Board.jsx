@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Modal from './Modal.jsx'
 
 const ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm']
@@ -13,8 +13,14 @@ const TABS = [
   ['yesno', 'Yes / No'],
 ]
 
-function Spell({ phrases, names, onSay }) {
-  const [text, setText] = useState('')
+function Spell({ initialText = '', phrases, names, onSay }) {
+  const [text, setText] = useState(initialText || '')
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    setText(initialText || '')
+  }, [initialText])
+
   const vocab = useMemo(() => {
     const words = new Set(COMMON)
     for (const p of phrases) for (const w of p.text.toLowerCase().match(/[a-z']+/g) || []) words.add(w)
@@ -29,15 +35,80 @@ function Spell({ phrases, names, onSay }) {
     text.trim().length >= 2
       ? phrases.filter((p) => p.text.toLowerCase().startsWith(text.trim().toLowerCase())).slice(0, 2)
       : []
-  const add = (ch) => setText((t) => t + (t === '' ? ch.toUpperCase() : ch))
-  const complete = (w) => setText(parts.slice(0, -1).concat(w).join(' ') + ' ')
+
+  const add = (ch) => {
+    const input = inputRef.current
+    if (input && document.activeElement === input) {
+      const start = input.selectionStart ?? text.length
+      const end = input.selectionEnd ?? text.length
+      const insert = start === 0 && text === '' ? ch.toUpperCase() : ch
+      const next = text.slice(0, start) + insert + text.slice(end)
+      setText(next)
+      requestAnimationFrame(() => {
+        if (inputRef.current) {
+          inputRef.current.selectionStart = inputRef.current.selectionEnd = start + insert.length
+          inputRef.current.focus()
+        }
+      })
+    } else {
+      setText((t) => t + (t === '' ? ch.toUpperCase() : ch))
+    }
+  }
+
+  const complete = (w) => {
+    setText(parts.slice(0, -1).concat(w).join(' ') + ' ')
+    inputRef.current?.focus()
+  }
+
+  const handleDelete = () => {
+    const input = inputRef.current
+    if (input && document.activeElement === input) {
+      const start = input.selectionStart ?? text.length
+      const end = input.selectionEnd ?? text.length
+      if (start !== end) {
+        const next = text.slice(0, start) + text.slice(end)
+        setText(next)
+        requestAnimationFrame(() => {
+          if (inputRef.current) {
+            inputRef.current.selectionStart = inputRef.current.selectionEnd = start
+            inputRef.current.focus()
+          }
+        })
+        return
+      }
+      if (start > 0) {
+        const next = text.slice(0, start - 1) + text.slice(start)
+        setText(next)
+        requestAnimationFrame(() => {
+          if (inputRef.current) {
+            inputRef.current.selectionStart = inputRef.current.selectionEnd = start - 1
+            inputRef.current.focus()
+          }
+        })
+        return
+      }
+    }
+    setText((t) => t.slice(0, -1))
+  }
 
   return (
     <div className="spell">
-      <output className="spell-out" aria-live="polite">
-        {text || <span className="muted">Tap letters to spell it</span>}
-        <span className="caret" aria-hidden="true" />
-      </output>
+      <textarea
+        ref={inputRef}
+        className="spell-out"
+        rows={2}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey && text.trim()) {
+            e.preventDefault()
+            onSay(text.trim(), 'spell')
+          }
+        }}
+        placeholder="Type or tap letters to spell or edit…"
+        autoFocus
+        aria-label="Sentence to say"
+      />
       <div className="suggest">
         {whole.map((p) => (
           <button key={p.text} className="suggest-phrase" onClick={() => onSay(p.text, 'phrase')}>
@@ -61,14 +132,14 @@ function Spell({ phrases, names, onSay }) {
           </div>
         ))}
         <div className="key-row">
-          <button className="key key-wide" onClick={() => setText((t) => t.slice(0, -1))}>Delete</button>
-          <button className="key key-space" onClick={() => setText((t) => t + ' ')}>space</button>
+          <button className="key key-wide" onClick={handleDelete}>Delete</button>
+          <button className="key key-space" onClick={() => add(' ')}>space</button>
           <button className="key key-wide" onClick={() => add('?')}>?</button>
-          <button className="key key-wide" onClick={() => setText('')}>Clear</button>
+          <button className="key key-wide" onClick={() => { setText(''); inputRef.current?.focus(); }}>Clear</button>
         </div>
       </div>
       <button className="btn btn-primary btn-lg btn-block" disabled={!text.trim()} onClick={() => onSay(text.trim(), 'spell')}>
-        Use this sentence
+        {initialText ? 'Use edited sentence' : 'Use this sentence'}
       </button>
     </div>
   )
@@ -107,11 +178,12 @@ function YesNo({ onSay }) {
   )
 }
 
-/** "None of these": never leave someone stuck when lip reading gets it wrong. */
-export default function Board({ initialTab = 'spell', phrases, names, onSay, onClose }) {
+/** "None of these": never leave someone stuck when lip reading gets it wrong. Also used to edit phrases. */
+export default function Board({ initialTab = 'spell', initialText = '', phrases, names, onSay, onClose }) {
   const [tab, setTab] = useState(initialTab)
+  const title = initialText ? 'Edit sentence' : 'Say it another way'
   return (
-    <Modal title="Say it another way" onClose={onClose} wide labelledBy="board-title">
+    <Modal title={title} onClose={onClose} wide labelledBy="board-title">
       <div className="seg seg-lg" role="tablist" aria-label="Ways to say it">
         {TABS.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} aria-pressed={tab === id} onClick={() => setTab(id)}>
@@ -120,7 +192,7 @@ export default function Board({ initialTab = 'spell', phrases, names, onSay, onC
         ))}
       </div>
       <div className="board-body">
-        {tab === 'spell' && <Spell phrases={phrases} names={names} onSay={onSay} />}
+        {tab === 'spell' && <Spell initialText={initialText} phrases={phrases} names={names} onSay={onSay} />}
         {tab === 'phrases' && <Phrases phrases={phrases} onSay={onSay} />}
         {tab === 'yesno' && <YesNo onSay={onSay} />}
       </div>

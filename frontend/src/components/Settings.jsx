@@ -3,7 +3,7 @@ import Modal from './Modal.jsx'
 import YourVoice from './YourVoice.jsx'
 import { listBrowserVoices, listMacVoices, speak } from '../lib/speech.js'
 
-const TABS = ['How you use it', 'Reading', 'Voice', 'Privacy', 'Phrases and names', 'Display']
+const TABS = ['How you use it', 'Reading', 'Voice', 'Virtual Mic / Zoom', 'Privacy', 'Phrases and names', 'Display']
 
 function Toggle({ label, hint, checked, onChange }) {
   return (
@@ -33,7 +33,36 @@ function Choice({ label, value, options, onChange }) {
   )
 }
 
-function UseTab({ prefs, onSetup }) {
+function UseTab({ prefs, setPref, onSetup }) {
+  const [context, setContext] = useState(prefs.user_context || '')
+
+  useEffect(() => {
+    setContext(prefs.user_context || '')
+  }, [prefs.user_context])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (context !== (prefs.user_context || '')) {
+        setPref('user_context', context)
+      }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [context, prefs.user_context, setPref])
+
+  const saveContext = (val) => {
+    setContext(val)
+    setPref('user_context', val)
+  }
+
+  const examples = [
+    { label: 'Thirsty / Drinking', text: 'I am very thirsty and need water or something to drink' },
+    { label: 'Hospital / ICU', text: 'In a hospital recovering from surgery, speaking with doctors and nurses' },
+    { label: 'Pain / Needs', text: 'In pain, needing medication, nurse or assistance' },
+    { label: 'Park / Outdoors', text: 'At a park outdoors with friends, asking about trails, water and activities' },
+    { label: 'Quiet library', text: 'In a quiet library studying and working' },
+    { label: 'At home', text: 'At home with family and visitors' },
+  ]
+
   return (
     <div className="stack">
       <p className="muted">
@@ -64,6 +93,49 @@ function UseTab({ prefs, onSetup }) {
           nothing is saved.
         </dd>
       </dl>
+
+      <section className="sub">
+        <h3>Where you are or what you’re doing (AI context)</h3>
+        <p className="muted small">
+          Tell the language model your setting or situation. This guides it to pick relevant words and domain
+          terminology when lip reading (for example medical terms in a hospital, or nature and recreation terms at a park).
+        </p>
+        <label className="field">
+          <span className="sr-only">Context for why you are using the app</span>
+          <textarea
+            id="user-context"
+            className="input"
+            rows={3}
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+            onBlur={(e) => saveContext(e.target.value)}
+            placeholder="e.g. In a hospital recovering from surgery, talking to nurses and doctors. Or: At a park with friends. Or: In a quiet study room."
+          />
+        </label>
+        <div className="chips" style={{ marginTop: '8px' }}>
+          {examples.map((ex) => (
+            <button
+              key={ex.label}
+              type="button"
+              className="chip"
+              onClick={() => saveContext(ex.text)}
+              style={{ cursor: 'pointer' }}
+            >
+              {ex.label}
+            </button>
+          ))}
+          {context && (
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => saveContext('')}
+              style={{ marginLeft: 'auto', alignSelf: 'center' }}
+            >
+              Clear context
+            </button>
+          )}
+        </div>
+      </section>
     </div>
   )
 }
@@ -97,6 +169,11 @@ function ReadingTab({ prefs, setPref, health }) {
         onChange={(v) => setPref('word_check', v)}
       />
       {prefs.word_check && wordCheckNote(wc) && <p className="muted small">{wordCheckNote(wc)}</p>}
+      {prefs.user_context && (
+        <p className="muted small">
+          Active AI context: “{prefs.user_context}” (change under “How you use it”).
+        </p>
+      )}
       <Toggle
         label="Keep my mouth in the middle"
         hint="The lip window follows your mouth, so you can shift around in bed or in your chair."
@@ -111,6 +188,12 @@ function ReadingTab({ prefs, setPref, health }) {
           ['fast', 'Faster'],
           ['accurate', 'More accurate, slower'],
         ]}
+      />
+      <Toggle
+        label="Patient Voice Assist (Audio + Lip Sync)"
+        hint="Captures faint or partial vocal sounds from your microphone and fuses them with lip reading for enhanced accuracy."
+        checked={prefs.voice_assist}
+        onChange={(v) => setPref('voice_assist', v)}
       />
       <Toggle
         label="Only use my saved phrases"
@@ -175,6 +258,83 @@ function VoiceTab({ prefs, setPref, voiceStatus, onVoiceChanged, speakerId }) {
       <div>
         <button className="btn" onClick={() => speak('Hello, this is how I sound.', { ...prefs, use_my_voice: false, speaker_id: speakerId }, voiceStatus)}>
           Play the computer voice
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function VirtualMicTab({ prefs, setPref, speakers = [], voiceStatus, speakerId }) {
+  const [testing, setTesting] = useState(false)
+  const isBlackHole = speakers.some((s) => s.isVirtualMic || /blackhole/i.test(s.label))
+
+  const handleTestAudio = async () => {
+    setTesting(true)
+    try {
+      await speak(
+        'Testing SilentVoice virtual microphone for Zoom. Audio is streaming properly.',
+        { ...prefs, speaker_id: speakerId },
+        voiceStatus,
+      )
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="stack">
+      <section className="sub">
+        <h3>Zoom, Google Meet & Call Virtual Microphone</h3>
+        {isBlackHole ? (
+          <div className="badge badge-success" style={{ alignSelf: 'flex-start', padding: '6px 12px' }}>
+            ● BlackHole 2ch Virtual Audio Driver Detected
+          </div>
+        ) : (
+          <div className="badge badge-warning" style={{ alignSelf: 'flex-start', padding: '6px 12px' }}>
+            ▲ BlackHole 2ch Not Detected
+          </div>
+        )}
+        <p className="muted small">
+          BlackHole is an open-source macOS virtual audio driver that routes SilentVoice’s synthetic speech into Zoom, Google Meet, Microsoft Teams, and Slack as microphone input with zero room noise.
+        </p>
+      </section>
+
+      <section className="sub">
+        <h3>Zoom & Google Meet Configuration</h3>
+        <ol style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: 'var(--fs-body)' }}>
+          <li>
+            <strong>Zoom:</strong> Settings &gt; Audio &gt; set <strong>Microphone</strong> to <strong>BlackHole 2ch</strong>.
+          </li>
+          <li>
+            <strong>Google Meet:</strong> Settings (three dots) &gt; Audio &gt; set <strong>Microphone</strong> to <strong>BlackHole 2ch</strong>.
+          </li>
+          <li>
+            <strong>Speakers:</strong> Leave set to your physical computer speakers or headphones (never set speaker to BlackHole).
+          </li>
+          <li>
+            <strong>Automatic volume:</strong> Disable &ldquo;Automatically adjust microphone volume&rdquo; in call settings.
+          </li>
+        </ol>
+      </section>
+
+      <label className="field">
+        <span>Minimum confidence threshold for Live Mode ({Math.round((prefs.live_min_confidence ?? 0.52) * 100)}%)</span>
+        <input
+          type="range"
+          min="0.3"
+          max="0.8"
+          step="0.05"
+          value={prefs.live_min_confidence ?? 0.52}
+          onChange={(e) => setPref('live_min_confidence', Number(e.target.value))}
+        />
+        <span className="muted small">
+          Higher values prevent uncertain or partial phrases from being transmitted to your call.
+        </span>
+      </label>
+
+      <div>
+        <button type="button" className="btn" onClick={handleTestAudio} disabled={testing}>
+          {testing ? 'Playing test speech…' : 'Test Speech to Selected Output'}
         </button>
       </div>
     </div>
@@ -346,9 +506,10 @@ export default function Settings(props) {
           ))}
         </div>
         <div className="settings-panel">
-          {tab === 'How you use it' && <UseTab prefs={prefs} onSetup={props.onSetup} />}
+          {tab === 'How you use it' && <UseTab prefs={prefs} setPref={setPref} onSetup={props.onSetup} />}
           {tab === 'Reading' && <ReadingTab prefs={prefs} setPref={setPref} health={props.health} />}
           {tab === 'Voice' && <VoiceTab prefs={prefs} setPref={setPref} {...props} />}
+          {tab === 'Virtual Mic / Zoom' && <VirtualMicTab prefs={prefs} setPref={setPref} {...props} />}
           {tab === 'Privacy' && <PrivacyTab prefs={prefs} setPref={setPref} {...props} />}
           {tab === 'Phrases and names' && <PhrasesTab profile={profile} onSaveProfile={props.onSaveProfile} />}
           {tab === 'Display' && <DisplayTab prefs={prefs} setPref={setPref} />}

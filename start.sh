@@ -43,8 +43,9 @@ BACK=$!
 FRONT=$!
 
 echo ""
-echo "  SilentVoice:  http://localhost:5173   (open in Chrome)"
-echo "  API health:   http://127.0.0.1:8000/api/health"
+echo "  SilentVoice:      http://localhost:5173   (open in Chrome)"
+echo "  API health:       http://127.0.0.1:8000/api/health"
+echo "  Zoom Virtual Mic: Select 'BlackHole 2ch' in Zoom Settings > Audio > Microphone"
 echo "  The lip-reading model loads in the background (about 20-60 s)."
 echo "  Press Ctrl+C to stop."
 echo ""

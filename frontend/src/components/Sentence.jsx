@@ -61,6 +61,13 @@ export default function Sentence({ current, reading, error, dest, onDeliver, onP
         <button className="btn btn-primary btn-lg" onClick={() => onDeliver(current.text)}>
           {ask ? `Yes, ${dest.action.toLowerCase()}` : current.done ? dest.again : dest.action}
         </button>
+        <button
+          type="button"
+          className="btn btn-lg"
+          onClick={() => onFallback('spell', current.text)}
+        >
+          Edit
+        </button>
       </div>
 
       {current.source === 'lipread' ? (
